@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let editMenu = NSMenu(title: "Edit")
         editItem.submenu = editMenu
         editMenu.addItem(withTitle: "Select All", action: #selector(SimulationViewController.selectAll(_:)), keyEquivalent: "a")
-        editMenu.addItem(withTitle: "Delete Selected", action: #selector(SimulationViewController.deleteSelected(_:)), keyEquivalent: String(UnicodeScalar(NSDeleteCharacter)!))
+        editMenu.addItem(withTitle: "Delete Selected", action: #selector(SimulationViewController.deleteSelected(_:)), keyEquivalent: "\u{7F}")
 
         // Simulation menu
         let simItem = NSMenuItem(title: "Simulation", action: nil, keyEquivalent: "")

@@ -107,6 +107,7 @@ final class ShapeEditorViewController: NSViewController {
     // MARK: - Actions
 
     @objc private func undoVertex() {
+        guard !editorView.vertices.isEmpty else { return }
         editorView.vertices.removeLast()
         editorView.needsDisplay = true
         updateUI()
