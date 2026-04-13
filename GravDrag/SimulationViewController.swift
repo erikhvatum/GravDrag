@@ -286,7 +286,7 @@ final class SimulationViewController: NSViewController {
         updateHUD()
     }
 
-    @objc func selectAll(_ sender: Any? = nil) {
+    @objc override func selectAll(_ sender: Any? = nil) {
         simulation.selectAll()
         updateHUD()
     }
