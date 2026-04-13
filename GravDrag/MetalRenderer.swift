@@ -296,4 +296,3 @@ extension Body {
 }
 
 
-// MARK: - RenderUniforms (matches Metal struct)
