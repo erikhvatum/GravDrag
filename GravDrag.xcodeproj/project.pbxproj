@@ -8,6 +8,7 @@ objects = {
 
 /* Begin PBXBuildFile section */
 AA2000000000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000002 /* AppDelegate.swift */; };
+AA2000000000000000000013 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000015 /* main.swift */; };
 AA2000000000000000000002 /* Body.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000003 /* Body.swift */; };
 AA2000000000000000000003 /* GravitySimulation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000004 /* GravitySimulation.swift */; };
 AA2000000000000000000004 /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000005 /* MetalRenderer.swift */; };
@@ -24,6 +25,7 @@ AA2000000000000000000012 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFi
 /* Begin PBXFileReference section */
 AA1000000000000000000001 /* GravDrag.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GravDrag.app; sourceTree = BUILT_PRODUCTS_DIR; };
 AA1000000000000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+AA1000000000000000000015 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 AA1000000000000000000003 /* Body.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Body.swift; sourceTree = "<group>"; };
 AA1000000000000000000004 /* GravitySimulation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GravitySimulation.swift; sourceTree = "<group>"; };
 AA1000000000000000000005 /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
@@ -65,6 +67,7 @@ AA3000000000000000000003 /* GravDrag */ = {
 isa = PBXGroup;
 children = (
 AA1000000000000000000002 /* AppDelegate.swift */,
+AA1000000000000000000015 /* main.swift */,
 AA1000000000000000000003 /* Body.swift */,
 AA1000000000000000000004 /* GravitySimulation.swift */,
 AA1000000000000000000005 /* MetalRenderer.swift */,
@@ -166,6 +169,7 @@ isa = PBXSourcesBuildPhase;
 buildActionMask = 2147483647;
 files = (
 AA2000000000000000000001 /* AppDelegate.swift in Sources */,
+AA2000000000000000000013 /* main.swift in Sources */,
 AA2000000000000000000002 /* Body.swift in Sources */,
 AA2000000000000000000003 /* GravitySimulation.swift in Sources */,
 AA2000000000000000000004 /* MetalRenderer.swift in Sources */,
