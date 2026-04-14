@@ -37,6 +37,14 @@ final class SimulationViewController: NSViewController {
     private var bodyCountLabel:  NSTextField!
     private var spinLabel:       NSTextField!
     private var spinStepper:     NSStepper!
+    private var tableButton:     NSButton!
+
+    // MARK: Inspector table
+    private var splitView: NSSplitView!
+    private var tableView: NSTableView!
+    private var tableScrollView: NSScrollView!
+    private var showsTable: Bool = false
+    private var hasPerformedInitialLayout: Bool = false
 
     // MARK: Interaction state
     private var toolMode:      ToolMode      = .add
@@ -103,17 +111,39 @@ final class SimulationViewController: NSViewController {
         // Build toolbar FIRST so we can anchor metalView below it
         buildToolbar()
 
-        view.addSubview(metalView)
+        // Build inspector table (virtualized NSTableView)
+        buildInspectorTable()
+
+        // Use split view so the table can be toggled/collapsed with no layout thrashing
+        splitView = NSSplitView()
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.addArrangedSubview(metalView)
+        splitView.addArrangedSubview(tableScrollView)
+
+        view.addSubview(splitView)
+        view.addSubview(toolbar)
+
         NSLayoutConstraint.activate([
-            metalView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
-            metalView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            metalView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            metalView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            toolbar.topAnchor.constraint(equalTo: view.topAnchor),
+            toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 40),
+
+            splitView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        // Simulation update → HUD refresh
+        // Simulation update → HUD + optional table refresh.
+        // When table is hidden we skip reloadData() entirely for zero performance cost.
         simulation.onUpdate = { [weak self] in
-            DispatchQueue.main.async { self?.updateHUD() }
+            DispatchQueue.main.async {
+                self?.updateHUD()
+                self?.updateTable()
+            }
         }
 
         startPhysicsTimer()
@@ -124,6 +154,16 @@ final class SimulationViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeFirstResponder(view)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if !hasPerformedInitialLayout {
+            hasPerformedInitialLayout = true
+            if !showsTable && splitView != nil {
+                splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
+            }
+        }
     }
 
     // MARK: - Toolbar construction
@@ -175,6 +215,10 @@ final class SimulationViewController: NSViewController {
         spinStepper.action     = #selector(spinStepperChanged(_:))
         spinStepper.toolTip    = "Spin selected body (also: scroll wheel)"
 
+        // Inspector table toggle
+        tableButton = makeToolButton("≡", tip: "Toggle data table (T)", action: #selector(toggleTable))
+        tableButton.setButtonType(.pushOnPushOff)
+
         // Body count
         bodyCountLabel = NSTextField(labelWithString: "0 bodies")
         bodyCountLabel.textColor = .secondaryLabelColor
@@ -193,6 +237,8 @@ final class SimulationViewController: NSViewController {
                           shapePopup,
                           sep(),
                           spinLabel, spinStepper,
+                          sep(),
+                          tableButton,
                           spacer,
                           bodyCountLabel] {
             stack.addArrangedSubview(v)
@@ -229,6 +275,80 @@ final class SimulationViewController: NSViewController {
         return b
     }
 
+    // MARK: - Inspector Table Setup (virtualized, zero-cost when hidden)
+
+    private func buildInspectorTable() {
+        tableScrollView = NSScrollView()
+        tableScrollView.hasVerticalScroller = true
+        tableScrollView.borderType = .bezelBorder
+        tableScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        tableView = NSTableView()
+        tableView.rowHeight = 22
+        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.allowsColumnResizing = true
+        tableView.allowsColumnSelection = false
+        tableView.identifier = NSUserInterfaceItemIdentifier("BodyTable")
+
+        let columnData: [(identifier: String, title: String, width: CGFloat)] = [
+            ("id",       "ID",       68),
+            ("shape",    "Shape",    78),
+            ("posX",     "Pos X",    78),
+            ("posY",     "Pos Y",    78),
+            ("velX",     "Vel X",    78),
+            ("velY",     "Vel Y",    78),
+            ("mass",     "Mass",     72),
+            ("size",     "Size",     72),
+            ("color",    "Color",    110)
+        ]
+
+        for (id, title, width) in columnData {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
+            column.title = title
+            column.width = width
+            column.minWidth = 60
+            tableView.addTableColumn(column)
+        }
+
+        tableScrollView.documentView = tableView
+    }
+
+    // MARK: - Coordinate transforms (matrix-based as hinted)
+
+    private var viewToWorldMatrix: float4x4 {
+        let size = metalView.bounds.size
+        guard size.width > 0 && size.height > 0 else { return .identity }
+
+        let ar = Float(size.width / size.height)
+        let scale = camera.scale
+
+        let viewToNDC = float4x4(
+            columns: (
+                SIMD4(2 / Float(size.width), 0, 0, -1),
+                SIMD4(0, 2 / Float(size.height), 0, -1),
+                SIMD4(0, 0, 1, 0),
+                SIMD4(0, 0, 0, 1)
+            )
+        )
+
+        let ndcToWorld = float4x4(
+            columns: (
+                SIMD4(scale, 0, 0, camera.center.x),
+                SIMD4(0, scale / ar, 0, camera.center.y),
+                SIMD4(0, 0, 1, 0),
+                SIMD4(0, 0, 0, 1)
+            )
+        )
+
+        return ndcToWorld * viewToNDC
+    }
+
+    private var worldToViewMatrix: float4x4 {
+        viewToWorldMatrix.inverse
+    }
+
     // MARK: - Physics timer
 
     private func startPhysicsTimer() {
@@ -246,6 +366,14 @@ final class SimulationViewController: NSViewController {
         if let sel = simulation.bodies.first(where: { $0.isSelected }) {
             spinStepper.doubleValue = Double(sel.angularVelocity)
         }
+        tableButton.state = showsTable ? .on : .off
+    }
+
+    private func updateTable() {
+        // Guarded so there is literally zero table-related work when hidden.
+        // NSTableView itself is virtualized (only visible rows are materialized).
+        guard showsTable else { return }
+        tableView.reloadData()
     }
 
     private func updateToolButtons() {
@@ -266,11 +394,17 @@ final class SimulationViewController: NSViewController {
         set { renderer.camera = newValue }
     }
 
-    /// Convert an NSEvent to a world-space position, relative to the metalView.
     private func worldPoint(from event: NSEvent) -> SIMD2<Float> {
-        // NSEvent.locationInWindow → metalView local coords (origin: bottom-left)
         let p = metalView.convert(event.locationInWindow, from: nil)
-        return camera.viewToWorld(p, viewSize: metalView.bounds.size)
+        let size = metalView.bounds.size
+        guard size.width > 0 && size.height > 0 else {
+            return .zero
+        }
+
+        let transform = viewToWorldMatrix
+        let viewP = SIMD4<Float>(Float(p.x), Float(p.y), 0, 1)
+        let worldP = transform * viewP
+        return SIMD2<Float>(worldP.x, worldP.y)
     }
 
     // MARK: - Menu / toolbar actions
@@ -327,6 +461,24 @@ final class SimulationViewController: NSViewController {
         let val = Float(sender.doubleValue)
         simulation.bodies.filter { $0.isSelected }.forEach { $0.angularVelocity = val }
         simulation.rebuildGPUState()
+    }
+
+    @objc private func toggleTable(_ sender: Any? = nil) {
+        showsTable.toggle()
+
+        if showsTable {
+            // Reveal right pane (roughly 1/3 of window)
+            let targetWidth = view.bounds.width * 0.68
+            splitView.setPosition(targetWidth, ofDividerAt: 0)
+        } else {
+            // Collapse table pane
+            splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
+        }
+
+        updateHUD()
+        if showsTable {
+            updateTable()
+        }
     }
 
     // MARK: - Mouse events
@@ -462,6 +614,8 @@ final class SimulationViewController: NSViewController {
             selectDeleteTool()
         case 15:                                    // R
             resetSimulation()
+        case 17:                                    // T
+            toggleTable()
         default:
             super.keyDown(with: event)
         }
@@ -521,6 +675,106 @@ final class SimulationViewController: NSViewController {
                 simulation.bodies(inLasso: lassoPoints).forEach { $0.isSelected = true }
             }
         }
+    }
+
+    // MARK: - Table helpers (used by data source)
+
+    private func shapeDescription(for body: Body) -> String {
+        let count = body.localVertices.count
+        if count >= 24 && count <= 64 {
+            return "Circle"
+        } else if count == 3 {
+            return "Triangle"
+        } else if count == 4 {
+            return "Rectangle"
+        } else {
+            return "Poly(\(count))"
+        }
+    }
+
+    private func shortID(for body: Body) -> String {
+        String(body.id.uuidString.prefix(8))
+    }
+}
+
+// MARK: - NSTableViewDataSource & Delegate
+
+extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        simulation.bodies.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < simulation.bodies.count else { return nil }
+        let body = simulation.bodies[row]
+        guard let column = tableColumn else { return nil }
+
+        let identifier = NSUserInterfaceItemIdentifier("DataCell")
+        var cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+
+        if cell == nil {
+            cell = NSTableCellView()
+            let textField = NSTextField()
+            textField.isEditable = false
+            textField.isBordered = false
+            textField.backgroundColor = .clear
+            textField.drawsBackground = false
+            textField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            cell?.textField = textField
+            cell?.addSubview(textField)
+            cell?.identifier = identifier
+
+            textField.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                textField.leadingAnchor.constraint(equalTo: cell!.leadingAnchor, constant: 6),
+                textField.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -6),
+                textField.centerYAnchor.constraint(equalTo: cell!.centerYAnchor)
+            ])
+        }
+
+        let textField = cell!.textField!
+        textField.textColor = .labelColor
+        textField.stringValue = ""
+
+        switch column.identifier.rawValue {
+        case "id":
+            textField.stringValue = shortID(for: body)
+
+        case "shape":
+            textField.stringValue = shapeDescription(for: body)
+
+        case "posX":
+            textField.stringValue = String(format: "%.2f", body.position.x)
+
+        case "posY":
+            textField.stringValue = String(format: "%.2f", body.position.y)
+
+        case "velX":
+            textField.stringValue = String(format: "%.2f", body.velocity.x)
+
+        case "velY":
+            textField.stringValue = String(format: "%.2f", body.velocity.y)
+
+        case "mass":
+            textField.stringValue = String(format: "%.1f", body.mass)
+
+        case "size":
+            textField.stringValue = String(format: "r=%.1f", body.boundingRadius())
+
+        case "color":
+            let c = body.color
+            textField.stringValue = String(format: "%.1f %.1f %.1f", c.x, c.y, c.z)
+            textField.textColor = NSColor(red: CGFloat(c.x),
+                                          green: CGFloat(c.y),
+                                          blue: CGFloat(c.z),
+                                          alpha: CGFloat(c.w))
+
+        default:
+            break
+        }
+
+        return cell
     }
 }
 
