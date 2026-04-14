@@ -154,10 +154,6 @@ final class SimulationViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeFirstResponder(view)
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
         if !hasPerformedInitialLayout {
             hasPerformedInitialLayout = true
             if !showsTable && splitView != nil {
@@ -319,7 +315,7 @@ final class SimulationViewController: NSViewController {
 
     private var viewToWorldMatrix: float4x4 {
         let size = metalView.bounds.size
-        guard size.width > 0 && size.height > 0 else { return .identity }
+        guard size.width > 0 && size.height > 0 else { return matrix_identity_float4x4 }
 
         let ar = Float(size.width / size.height)
         let scale = camera.scale
