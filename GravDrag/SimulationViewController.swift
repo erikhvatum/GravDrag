@@ -89,6 +89,7 @@ final class SimulationViewController: NSViewController {
         do {
             simulation = try GravitySimulation(device: device)
             simulation.loadDemoScene()
+            simulation.timeStep = 0.1   // Larger dt makes orbital velocity changes visible immediately
         } catch {
             fatalError("Failed to create simulation: \(error)")
         }
@@ -160,6 +161,10 @@ final class SimulationViewController: NSViewController {
                 splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
             }
         }
+        // Ensure renderer has correct view size after layout and split positioning.
+        // This prevents all bodies from appearing stacked in the center due to stale (1x1) viewSize.
+        renderer.viewSize = metalView.drawableSize
+        simulation.rebuildGPUState()
     }
 
     // MARK: - Toolbar construction
@@ -322,10 +327,10 @@ final class SimulationViewController: NSViewController {
 
         let viewToNDC = float4x4(
             columns: (
-                SIMD4(2 / Float(size.width), 0, 0, -1),
-                SIMD4(0, 2 / Float(size.height), 0, -1),
+                SIMD4(2 / Float(size.width), 0, 0, 0),
+                SIMD4(0, 2 / Float(size.height), 0, 0),
                 SIMD4(0, 0, 1, 0),
-                SIMD4(0, 0, 0, 1)
+                SIMD4(-1, -1, 0, 1)
             )
         )
 
@@ -463,13 +468,18 @@ final class SimulationViewController: NSViewController {
         showsTable.toggle()
 
         if showsTable {
+            tableScrollView.isHidden = false
             // Reveal right pane (roughly 1/3 of window)
             let targetWidth = view.bounds.width * 0.68
             splitView.setPosition(targetWidth, ofDividerAt: 0)
         } else {
+            tableScrollView.isHidden = true
             // Collapse table pane
             splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
         }
+
+        renderer.viewSize = metalView.drawableSize
+        simulation.rebuildGPUState()
 
         updateHUD()
         if showsTable {
@@ -747,10 +757,10 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
             textField.stringValue = String(format: "%.2f", body.position.y)
 
         case "velX":
-            textField.stringValue = String(format: "%.2f", body.velocity.x)
+            textField.stringValue = String(format: "%.3f", body.velocity.x)  // more precision so orbital changes are visible
 
         case "velY":
-            textField.stringValue = String(format: "%.2f", body.velocity.y)
+            textField.stringValue = String(format: "%.3f", body.velocity.y)  // more precision so orbital changes are visible
 
         case "mass":
             textField.stringValue = String(format: "%.1f", body.mass)
