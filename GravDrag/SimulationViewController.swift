@@ -111,6 +111,12 @@ final class SimulationViewController: NSViewController {
         renderer.simulation = simulation
         metalView.delegate  = renderer
 
+        // Explicit initial camera (zoomed out 2x from the Camera struct default of 300
+        // so the orbiting triangle is comfortably visible while centered on the sphere).
+        // This must be done *after* the renderer exists.
+        camera.center = .zero
+        camera.scale = 600.0
+
         // Build toolbar FIRST so we can anchor metalView below it
         buildToolbar()
 
@@ -331,38 +337,28 @@ final class SimulationViewController: NSViewController {
         tableScrollView.documentView = tableView
     }
 
-    // MARK: - Coordinate transforms (matrix-based as hinted)
+    // MARK: - Coordinate transforms (uses Camera.viewToWorld for perfect match with renderer/shaders)
 
-    private var viewToWorldMatrix: float4x4 {
-        let size = metalView.bounds.size
-        guard size.width > 0 && size.height > 0 else { return matrix_identity_float4x4 }
-
-        let ar = Float(size.width / size.height)
-        let scale = camera.scale
-
-        let viewToNDC = float4x4(
-            columns: (
-                SIMD4(2 / Float(size.width), 0, 0, 0),
-                SIMD4(0, 2 / Float(size.height), 0, 0),
-                SIMD4(0, 0, 1, 0),
-                SIMD4(-1, -1, 0, 1)
-            )
-        )
-
-        let ndcToWorld = float4x4(
-            columns: (
-                SIMD4(scale, 0, 0, camera.center.x),
-                SIMD4(0, scale / ar, 0, camera.center.y),
-                SIMD4(0, 0, 1, 0),
-                SIMD4(0, 0, 0, 1)
-            )
-        )
-
-        return ndcToWorld * viewToNDC
+    private var camera: Camera {
+        get { renderer.camera }
+        set { renderer.camera = newValue }
     }
 
-    private var worldToViewMatrix: float4x4 {
-        viewToWorldMatrix.inverse
+    private func worldPoint(from event: NSEvent) -> SIMD2<Float> {
+        var viewPoint = metalView.convert(event.locationInWindow, from: nil)
+        let boundsSize = metalView.bounds.size
+        let drawableSize = renderer.viewSize
+
+        // Convert points → pixels to match the renderer's drawableSize (and Camera.viewToWorld expectation).
+        // This eliminates the scale factor mismatch (especially on Retina where drawableSize is 2× bounds).
+        if boundsSize.width > 0 && boundsSize.height > 0 {
+            let scaleX = drawableSize.width / boundsSize.width
+            let scaleY = drawableSize.height / boundsSize.height
+            viewPoint.x *= scaleX
+            viewPoint.y *= scaleY
+        }
+
+        return camera.viewToWorld(viewPoint, viewSize: drawableSize)
     }
 
     // MARK: - Physics timer
@@ -410,26 +406,6 @@ final class SimulationViewController: NSViewController {
         lassoSelButton.isEnabled = inSel
     }
 
-    // MARK: - Camera helpers
-
-    private var camera: Camera {
-        get { renderer.camera }
-        set { renderer.camera = newValue }
-    }
-
-    private func worldPoint(from event: NSEvent) -> SIMD2<Float> {
-        let p = metalView.convert(event.locationInWindow, from: nil)
-        let size = metalView.bounds.size
-        guard size.width > 0 && size.height > 0 else {
-            return .zero
-        }
-
-        let transform = viewToWorldMatrix
-        let viewP = SIMD4<Float>(Float(p.x), Float(p.y), 0, 1)
-        let worldP = transform * viewP
-        return SIMD2<Float>(worldP.x, worldP.y)
-    }
-
     // MARK: - Menu / toolbar actions
 
     @objc func togglePause(_ sender: Any? = nil) {
@@ -445,6 +421,7 @@ final class SimulationViewController: NSViewController {
         simulation.clearFocus()
         simulation.rebuildGPUState()
         camera.center = .zero
+        camera.scale = 600.0  // Zoomed out 2x from the Camera default so the orbiting triangle is comfortably visible while centered on the central sphere
         renderer.selectionOverlay.isActive = false
         updateHUD()
         updateTable()
