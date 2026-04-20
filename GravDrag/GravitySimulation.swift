@@ -100,6 +100,20 @@ final class GravitySimulation {
         bodies.forEach { $0.isSelected = false }
     }
 
+    func setFocused(_ body: Body) {
+        // Only one body can be focused at a time
+        bodies.forEach { $0.isFocused = false }
+        body.isFocused = true
+    }
+
+    func clearFocus() {
+        bodies.forEach { $0.isFocused = false }
+    }
+
+    var focusedBody: Body? {
+        bodies.first { $0.isFocused }
+    }
+
     /// Returns the first body that contains the given world-space point.
     func body(at point: SIMD2<Float>) -> Body? {
         bodies.reversed().first { $0.contains(point: point) }
@@ -148,6 +162,7 @@ final class GravitySimulation {
         encoder.setBuffer(bodyBuffer[currentBufferIndex], offset: 0, index: 0) // input
         encoder.setBuffer(bodyBuffer[writeIdx],           offset: 0, index: 1) // output
         encoder.setBytes(&params, length: MemoryLayout<SimParams>.size, index: 2)
+        encoder.setBuffer(vertexBuffer, offset: 0, index: 3) // vertex buffer for collision detection
 
         let threadCount = MTLSize(width: bodies.count, height: 1, depth: 1)
         let threadGroupSize = MTLSize(

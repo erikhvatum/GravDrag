@@ -20,7 +20,9 @@ struct GPUBody {
     var colorA:           Float
     var isStatic:         Int32   // 1 = fixed
     var isSelected:       Int32   // 1 = selected (used by renderer)
-    // Total: 64 bytes (4-byte aligned, cache-friendly)
+    var isFocused:        Int32   // 1 = focused (camera follows)
+    var _padding:         Int32   // padding to maintain alignment
+    // Total: 72 bytes (4-byte aligned, cache-friendly)
 }
 
 // MARK: - Swift-side Body
@@ -39,6 +41,7 @@ final class Body: Identifiable {
     var color:           SIMD4<Float>
     var isStatic:        Bool
     var isSelected:      Bool = false
+    var isFocused:       Bool = false
 
     // Cache for GPU upload
     var vertexOffset: Int = 0   // set by GravitySimulation when building vertex buffer
@@ -173,7 +176,9 @@ final class Body: Identifiable {
             colorB:          color.z,
             colorA:          color.w,
             isStatic:        isStatic  ? 1 : 0,
-            isSelected:      isSelected ? 1 : 0
+            isSelected:      isSelected ? 1 : 0,
+            isFocused:       isFocused ? 1 : 0,
+            _padding:        0
         )
     }
 }

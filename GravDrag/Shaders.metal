@@ -17,7 +17,9 @@ struct Body {
     float4 color;           // 16
     int    isStatic;        // 4
     int    isSelected;      // 4
-    // 64 bytes total
+    int    isFocused;       // 4
+    int    _padding;        // 4
+    // 72 bytes total
 };
 
 struct SimParams {
@@ -34,14 +36,60 @@ struct RenderUniforms {
 };
 
 // ─────────────────────────────────────────────────────────
-// Compute: N-body gravity + semi-implicit Euler integration
+// Compute: N-body gravity + semi-implicit Euler integration + elastic collisions
 // Now uses separate input/output buffers to eliminate all races.
 // ─────────────────────────────────────────────────────────
+
+// Helper: compute bounding radius from vertex data
+float computeBoundingRadius(constant float2* vertices, int offset, int count) {
+    float maxDist = 0.0f;
+    for (int i = 0; i < count; i++) {
+        float2 v = vertices[offset + i];
+        float dist = length(v);
+        maxDist = max(maxDist, dist);
+    }
+    return maxDist;
+}
+
+// Helper: check if two circles collide and resolve with elastic collision
+bool resolveCircleCollision(thread Body& self, Body other, float selfRadius, float otherRadius) {
+    float2 diff = other.position - self.position;
+    float dist = length(diff);
+    float minDist = selfRadius + otherRadius;
+
+    if (dist < minDist && dist > 0.001f) {
+        // Collision detected
+        float2 normal = diff / dist;
+
+        // Separate the bodies (move self away from other)
+        float overlap = minDist - dist;
+        self.position -= normal * (overlap * 0.5f);
+
+        // Elastic collision response (100% elasticity, conserve momentum and energy)
+        // Relative velocity
+        float2 relVel = self.velocity - other.velocity;
+        float velAlongNormal = dot(relVel, normal);
+
+        // Don't resolve if velocities are separating
+        if (velAlongNormal > 0.0f) return true;
+
+        // Calculate impulse scalar (perfectly elastic: restitution = 1.0)
+        float impulse = -(2.0f * velAlongNormal) / (1.0f / self.mass + 1.0f / other.mass);
+
+        // Apply impulse to self (other body handled in its own thread)
+        float2 impulseVec = impulse * normal / self.mass;
+        self.velocity += impulseVec;
+
+        return true;
+    }
+    return false;
+}
 
 kernel void physicsStep(
     constant Body* inputBodies   [[ buffer(0) ]],
     device Body*   outputBodies  [[ buffer(1) ]],
     constant SimParams& params   [[ buffer(2) ]],
+    constant float2* vertices    [[ buffer(3) ]],
     uint id [[ thread_position_in_grid ]])
 {
     if (id >= params.bodyCount) return;
@@ -52,8 +100,12 @@ kernel void physicsStep(
         return;
     }
 
+    // Compute bounding radius for collision detection
+    float selfRadius = computeBoundingRadius(vertices, self.vertexOffset, self.vertexCount);
+
     float2 force = float2(0.0f, 0.0f);
 
+    // Gravity calculation
     for (uint i = 0; i < params.bodyCount; i++) {
         if (i == id) continue;
         Body other = inputBodies[i];
@@ -70,6 +122,14 @@ kernel void physicsStep(
     out.velocity += accel * params.dt;
     out.position += out.velocity * params.dt;
     out.angle    += out.angularVel * params.dt;
+
+    // Collision detection and response
+    for (uint i = 0; i < params.bodyCount; i++) {
+        if (i == id) continue;
+        Body other = inputBodies[i];
+        float otherRadius = computeBoundingRadius(vertices, other.vertexOffset, other.vertexCount);
+        resolveCircleCollision(out, other, selfRadius, otherRadius);
+    }
 
     outputBodies[id] = out;
 }

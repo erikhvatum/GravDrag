@@ -301,6 +301,7 @@ final class SimulationViewController: NSViewController {
         tableView.identifier = NSUserInterfaceItemIdentifier("BodyTable")
 
         let columnData: [(identifier: String, title: String, width: CGFloat)] = [
+            ("focus",    "Focus",    50),
             ("id",       "ID",       68),
             ("shape",    "Shape",    78),
             ("posX",     "Pos X",    78),
@@ -308,7 +309,8 @@ final class SimulationViewController: NSViewController {
             ("velX",     "Vel X",    78),
             ("velY",     "Vel Y",    78),
             ("mass",     "Mass",     72),
-            ("size",     "Size",     72),
+            ("radius",   "Radius",   72),
+            ("spin",     "Spin",     72),
             ("color",    "Color",    110)
         ]
 
@@ -375,6 +377,11 @@ final class SimulationViewController: NSViewController {
             spinStepper.doubleValue = Double(sel.angularVelocity)
         }
         tableButton.state = showsTable ? .on : .off
+
+        // Pan camera to keep focused body centered
+        if let focused = simulation.focusedBody {
+            camera.center = focused.position
+        }
     }
 
     private func updateTable() {
@@ -754,6 +761,34 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
         let body = simulation.bodies[row]
         guard let column = tableColumn else { return nil }
 
+        // Focus column gets a checkbox
+        if column.identifier.rawValue == "focus" {
+            let checkIdentifier = NSUserInterfaceItemIdentifier("FocusCheckbox")
+            var cell = tableView.makeView(withIdentifier: checkIdentifier, owner: self) as? NSTableCellView
+
+            if cell == nil {
+                cell = NSTableCellView()
+                let checkbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+                checkbox.translatesAutoresizingMaskIntoConstraints = false
+                cell?.addSubview(checkbox)
+                cell?.identifier = checkIdentifier
+                NSLayoutConstraint.activate([
+                    checkbox.centerXAnchor.constraint(equalTo: cell!.centerXAnchor),
+                    checkbox.centerYAnchor.constraint(equalTo: cell!.centerYAnchor)
+                ])
+            }
+
+            if let checkbox = cell?.subviews.first as? NSButton {
+                checkbox.state = body.isFocused ? .on : .off
+                checkbox.target = self
+                checkbox.action = #selector(focusCheckboxToggled(_:))
+                checkbox.tag = row
+            }
+
+            return cell
+        }
+
+        // Other columns get text fields
         let identifier = NSUserInterfaceItemIdentifier("DataCell")
         var cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
 
@@ -780,6 +815,15 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
         let textField = cell!.textField!
         textField.textColor = .labelColor
         textField.stringValue = ""
+        textField.delegate = self
+
+        // Determine if editable and set up appropriately
+        let editableColumns = ["posX", "posY", "velX", "velY", "radius", "spin"]
+        textField.isEditable = editableColumns.contains(column.identifier.rawValue)
+        textField.isBordered = textField.isEditable
+        textField.drawsBackground = textField.isEditable
+        textField.backgroundColor = textField.isEditable ? NSColor.controlBackgroundColor : .clear
+        textField.tag = row
 
         switch column.identifier.rawValue {
         case "id":
@@ -795,16 +839,19 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
             textField.stringValue = String(format: "%.2f", body.position.y)
 
         case "velX":
-            textField.stringValue = String(format: "%.3f", body.velocity.x)  // more precision so orbital changes are visible
+            textField.stringValue = String(format: "%.3f", body.velocity.x)
 
         case "velY":
-            textField.stringValue = String(format: "%.3f", body.velocity.y)  // more precision so orbital changes are visible
+            textField.stringValue = String(format: "%.3f", body.velocity.y)
 
         case "mass":
             textField.stringValue = String(format: "%.1f", body.mass)
 
-        case "size":
-            textField.stringValue = String(format: "r=%.1f", body.boundingRadius())
+        case "radius":
+            textField.stringValue = String(format: "%.1f", body.boundingRadius())
+
+        case "spin":
+            textField.stringValue = String(format: "%.2f", body.angularVelocity)
 
         case "color":
             let c = body.color
@@ -821,6 +868,22 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
+    @objc private func focusCheckboxToggled(_ sender: NSButton) {
+        let row = sender.tag
+        guard row < simulation.bodies.count else { return }
+        let body = simulation.bodies[row]
+
+        if sender.state == .on {
+            simulation.setFocused(body)
+        } else {
+            simulation.clearFocus()
+        }
+
+        simulation.rebuildGPUState()
+        updateHUD()
+        updateTable()
+    }
+
     // Handle table selection changes to sync with simulation
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !isSyncingSelection else { return }  // Prevent loops from programmatic changes
@@ -833,6 +896,64 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
         }
         simulation.rebuildGPUState()  // Ensure scene reflects selection
         updateHUD()
+    }
+}
+
+// MARK: - NSTextFieldDelegate for editable table cells
+
+extension SimulationViewController: NSTextFieldDelegate {
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let textField = obj.object as? NSTextField else { return }
+        let row = textField.tag
+        guard row < simulation.bodies.count else { return }
+
+        let body = simulation.bodies[row]
+        let newValue = textField.stringValue
+        guard let floatValue = Float(newValue) else { return }
+
+        // Find which column by checking the table view
+        guard let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) else { return }
+        for i in 0..<tableView.numberOfColumns {
+            if let cellView = rowView.view(atColumn: i) as? NSTableCellView,
+               cellView.textField == textField {
+                let column = tableView.tableColumns[i]
+                handleCellEdit(body: body, column: column.identifier.rawValue, value: floatValue)
+                break
+            }
+        }
+    }
+
+    private func handleCellEdit(body: Body, column: String, value: Float) {
+        switch column {
+        case "posX":
+            body.position.x = value
+        case "posY":
+            body.position.y = value
+        case "velX":
+            body.velocity.x = value
+        case "velY":
+            body.velocity.y = value
+        case "radius":
+            // Scale all vertices to match new radius
+            let currentRadius = body.boundingRadius()
+            if currentRadius > 0 {
+                let scale = value / currentRadius
+                body.localVertices = body.localVertices.map { $0 * scale }
+                // Recalculate mass and moment of inertia
+                let area = Body.polygonArea(body.localVertices)
+                let density: Float = 1.0
+                body.mass = max(area * density, 0.5)
+                body.momentOfInertia = Body.polygonMomentOfInertia(body.localVertices, mass: body.mass)
+            }
+        case "spin":
+            body.angularVelocity = value
+        default:
+            return
+        }
+
+        // Update GPU state and refresh display
+        simulation.rebuildGPUState()
+        updateTable()
     }
 }
 
