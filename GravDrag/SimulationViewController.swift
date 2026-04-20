@@ -263,7 +263,7 @@ final class SimulationViewController: NSViewController {
                                target: self,
                                action: #selector(speedSliderChanged(_:)))
         speedSlider.numberOfTickMarks = speedTickCount
-        speedSlider.allowsTickMarkValuesOnly = true
+        speedSlider.allowsTickMarkValuesOnly = false
         speedSlider.isContinuous = true
         speedSlider.tickMarkPosition = .below
         speedSlider.controlSize = .small
@@ -439,8 +439,8 @@ final class SimulationViewController: NSViewController {
     }
 
     private func applySimulationSpeed(_ value: Float) {
-        let snapped = quantizedSpeed(value)
-        speedValue = snapped
+        let clamped = clampedSpeed(value)
+        speedValue = clamped
         simulation.timeStep = baseTimeStep * speedValue
         updateSpeedControls()
     }
@@ -455,6 +455,11 @@ final class SimulationViewController: NSViewController {
 
     @objc private func speedSliderChanged(_ sender: NSSlider) {
         applySimulationSpeed(Float(sender.doubleValue))
+        // Snap slider position to nearest tick while preserving typed value display
+        let snapped = quantizedSpeed(Float(sender.doubleValue))
+        isUpdatingSpeedUI = true
+        speedSlider.doubleValue = Double(snapped)
+        isUpdatingSpeedUI = false
     }
 
     @objc private func speedFieldChanged(_ sender: NSTextField) {
