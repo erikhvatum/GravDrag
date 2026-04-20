@@ -818,7 +818,7 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
         textField.delegate = self
 
         // Determine if editable and set up appropriately
-        let editableColumns = ["posX", "posY", "velX", "velY", "radius", "spin"]
+        let editableColumns = ["posX", "posY", "velX", "velY", "mass", "radius", "spin"]
         textField.isEditable = editableColumns.contains(column.identifier.rawValue)
         textField.isBordered = textField.isEditable
         textField.drawsBackground = textField.isEditable
@@ -933,6 +933,10 @@ extension SimulationViewController: NSTextFieldDelegate {
             body.velocity.x = value
         case "velY":
             body.velocity.y = value
+        case "mass":
+            body.mass = max(value, 0.1)  // Ensure mass stays positive with a minimum value
+            // Recalculate moment of inertia with new mass
+            body.momentOfInertia = Body.polygonMomentOfInertia(body.localVertices, mass: body.mass)
         case "radius":
             // Scale all vertices to match new radius
             let currentRadius = body.boundingRadius()
