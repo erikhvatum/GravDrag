@@ -255,8 +255,8 @@ final class SimulationViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
 
             toolbar.topAnchor.constraint(equalTo: view.topAnchor),
-            toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toolbar.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
             toolbar.heightAnchor.constraint(equalToConstant: 40),
         ])
     }
@@ -291,6 +291,8 @@ final class SimulationViewController: NSViewController {
         tableView.dataSource = self
         tableView.allowsColumnResizing = true
         tableView.allowsColumnSelection = false
+        // Enable multiple row selection for shift/command-click
+        tableView.allowsMultipleSelection = true
         tableView.identifier = NSUserInterfaceItemIdentifier("BodyTable")
 
         let columnData: [(identifier: String, title: String, width: CGFloat)] = [
@@ -375,6 +377,8 @@ final class SimulationViewController: NSViewController {
         // NSTableView itself is virtualized (only visible rows are materialized).
         guard showsTable else { return }
         tableView.reloadData()
+        // Re-sync table selection after reload to preserve it
+        updateTableSelection()
     }
 
     private func updateToolButtons() {
@@ -424,6 +428,8 @@ final class SimulationViewController: NSViewController {
     @objc override func selectAll(_ sender: Any? = nil) {
         simulation.selectAll()
         updateHUD()
+        // Sync table selection after simulation change
+        updateTableSelection()
     }
 
     @objc func deleteSelected(_ sender: Any? = nil) {
@@ -432,6 +438,8 @@ final class SimulationViewController: NSViewController {
         }
         simulation.removeSelectedBodies()
         updateHUD()
+        // Sync table selection (though likely empty after delete)
+        updateTableSelection()
     }
 
     @objc private func selectAddTool()    { toolMode = .add;    simulation.deselectAll(); updateToolButtons() }
@@ -526,6 +534,8 @@ final class SimulationViewController: NSViewController {
             }
         }
         updateHUD()
+        // Sync table selection after any selection change in mouseDown
+        updateTableSelection()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -566,6 +576,8 @@ final class SimulationViewController: NSViewController {
                 selectionStart = nil
                 lassoPoints    = []
                 renderer.selectionOverlay.isActive = false
+                // Sync table selection after finalizing scene selection
+                updateTableSelection()
             }
         }
         updateHUD()
@@ -599,6 +611,8 @@ final class SimulationViewController: NSViewController {
             renderer.evictIndexBuffer(for: b.id)
             simulation.removeBody(b)
             updateHUD()
+            // Sync table selection (removal might affect indices, but likely no change)
+            updateTableSelection()
         }
     }
 
@@ -701,6 +715,23 @@ final class SimulationViewController: NSViewController {
     private func shortID(for body: Body) -> String {
         String(body.id.uuidString.prefix(8))
     }
+
+    // NEW: Flag to prevent selection syncing loops
+    private var isSyncingSelection = false
+
+    // Helper to sync table selection based on simulation
+    private func updateTableSelection() {
+        guard showsTable && !isSyncingSelection else { return }  // Skip if hidden or already syncing
+        isSyncingSelection = true
+        var indices = IndexSet()
+        for (index, body) in simulation.bodies.enumerated() {
+            if body.isSelected {
+                indices.insert(index)
+            }
+        }
+        tableView.selectRowIndexes(indices, byExtendingSelection: false)
+        isSyncingSelection = false
+    }
 }
 
 // MARK: - NSTableViewDataSource & Delegate
@@ -781,6 +812,20 @@ extension SimulationViewController: NSTableViewDataSource, NSTableViewDelegate {
         }
 
         return cell
+    }
+
+    // Handle table selection changes to sync with simulation
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !isSyncingSelection else { return }  // Prevent loops from programmatic changes
+        let selectedRows = tableView.selectedRowIndexes
+        simulation.deselectAll()
+        for row in selectedRows {
+            if row < simulation.bodies.count {
+                simulation.bodies[row].isSelected = true
+            }
+        }
+        simulation.rebuildGPUState()  // Ensure scene reflects selection
+        updateHUD()
     }
 }
 
