@@ -291,6 +291,7 @@ final class SimulationViewController: NSViewController {
     private func buildInspectorTable() {
         tableScrollView = NSScrollView()
         tableScrollView.hasVerticalScroller = true
+        tableScrollView.hasHorizontalScroller = true
         tableScrollView.borderType = .bezelBorder
         tableScrollView.translatesAutoresizingMaskIntoConstraints = false
 
