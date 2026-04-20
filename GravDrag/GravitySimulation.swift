@@ -219,8 +219,11 @@ final class GravitySimulation {
                 offset += 1
             }
         }
-        // Re-upload body buffer to current buffer so vertex offsets are current
-        uploadBodies(to: currentBufferIndex)
+        // Re-upload body buffer to BOTH buffers so vertex offsets are current in both.
+        // This is critical because the vertex buffer is shared, and double-buffering
+        // the body data means both buffers need consistent vertex offset information.
+        uploadBodies(to: 0)
+        uploadBodies(to: 1)
     }
 
     func uploadBodies(to index: Int) {
