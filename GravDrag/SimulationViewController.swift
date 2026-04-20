@@ -632,7 +632,6 @@ final class SimulationViewController: NSViewController {
             splitView.setPosition(position, ofDividerAt: 0)
             DispatchQueue.main.async { [weak self] in
                 self?.isRestoringSplitPosition = false
-                self?.saveSplitViewPosition()
             }
         } else {
             tableScrollView.isHidden = true
