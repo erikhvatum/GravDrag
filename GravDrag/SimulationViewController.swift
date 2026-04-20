@@ -28,6 +28,7 @@ final class SimulationViewController: NSViewController {
     // MARK: Toolbar outlets
     private var toolbar:         NSView!
     private var playPauseButton: NSButton!
+    private var resetButton:     NSButton!
     private var addButton:       NSButton!
     private var selectButton:    NSButton!
     private var deleteButton:    NSButton!
@@ -189,6 +190,9 @@ final class SimulationViewController: NSViewController {
         // Play / Pause
         playPauseButton = makeToolButton("⏸", tip: "Pause / Play (Space)", action: #selector(togglePause))
 
+        // Reset scene
+        resetButton = makeToolButton("⟳", tip: "Reset Scene (R)", action: #selector(resetSimulation))
+
         // Tool group
         addButton    = makeToolButton("＋", tip: "Add body (A)",     action: #selector(selectAddTool))
         selectButton = makeToolButton("↖",  tip: "Select / Drag (S)", action: #selector(selectSelectTool))
@@ -235,6 +239,7 @@ final class SimulationViewController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         for v: NSView in [playPauseButton,
+                          resetButton,
                           sep(),
                           addButton, selectButton, deleteButton,
                           sep(),
@@ -433,8 +438,15 @@ final class SimulationViewController: NSViewController {
     }
 
     @objc func resetSimulation(_ sender: Any? = nil) {
+        simulation.isPaused = true
         simulation.loadDemoScene()
+        simulation.deselectAll()
+        simulation.clearFocus()
+        simulation.rebuildGPUState()
+        camera.center = .zero
+        renderer.selectionOverlay.isActive = false
         updateHUD()
+        updateTable()
     }
 
     @objc override func selectAll(_ sender: Any? = nil) {
