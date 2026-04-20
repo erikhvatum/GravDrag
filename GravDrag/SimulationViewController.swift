@@ -555,6 +555,8 @@ final class SimulationViewController: NSViewController {
                 }
                 simulation.rebuildGPUState()
                 lastDragWorld = world
+                // Update table to show new positions during drag
+                updateTable()
             } else if selectionStart != nil {
                 updateSelectionOverlay(to: world)
             }

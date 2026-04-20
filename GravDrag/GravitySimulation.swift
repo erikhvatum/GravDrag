@@ -178,12 +178,11 @@ final class GravitySimulation {
 
     // MARK: - Public GPU state refresh
 
-    /// Re-uploads the current body data to both GPU buffers without running physics.
+    /// Re-uploads the current body data to the current GPU buffer without running physics.
     /// Call after modifying bodies' positions/velocities/selection directly (e.g., during a drag).
-    /// Both buffers must be kept in sync so the renderer always sees correct data.
+    /// Only uploads to currentBufferIndex; the next physics step will copy to the other buffer.
     func rebuildGPUState() {
-        uploadBodies(to: 0)
-        uploadBodies(to: 1)
+        uploadBodies(to: currentBufferIndex)
     }
 
     // MARK: - Private helpers
@@ -200,9 +199,8 @@ final class GravitySimulation {
                 offset += 1
             }
         }
-        // Re-upload body buffer to both buffers so vertex offsets are current
-        uploadBodies(to: 0)
-        uploadBodies(to: 1)
+        // Re-upload body buffer to current buffer so vertex offsets are current
+        uploadBodies(to: currentBufferIndex)
     }
 
     func uploadBodies(to index: Int) {
