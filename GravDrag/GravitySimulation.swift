@@ -70,22 +70,26 @@ final class GravitySimulation {
         guard bodies.count < kMaxBodies else { return }
         bodies.append(body)
         rebuildVertexBuffer()
+        onUpdate?()
     }
 
     func removeBody(_ body: Body) {
         bodies.removeAll { $0.id == body.id }
         rebuildVertexBuffer()
+        onUpdate?()
     }
 
     func removeBodies(_ toRemove: [Body]) {
         let ids = Set(toRemove.map { $0.id })
         bodies.removeAll { ids.contains($0.id) }
         rebuildVertexBuffer()
+        onUpdate?()
     }
 
     func removeSelectedBodies() {
         bodies.removeAll { $0.isSelected }
         rebuildVertexBuffer()
+        onUpdate?()
     }
 
     func selectAll() {
