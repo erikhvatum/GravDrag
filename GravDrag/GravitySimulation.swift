@@ -127,9 +127,6 @@ final class GravitySimulation {
         guard !isPaused, !bodies.isEmpty else { return }
 
         let writeIdx = 1 - currentBufferIndex
-        // Upload current CPU state to write buffer so physics shader has latest metadata
-        // (selection, color, etc.) even though it only updates position/velocity/angle.
-        uploadBodies(to: writeIdx)
 
         var params = SimParams(
             bodyCount: UInt32(bodies.count),
@@ -142,8 +139,8 @@ final class GravitySimulation {
               let encoder  = cmdBuf.makeComputeCommandEncoder() else { return }
 
         encoder.setComputePipelineState(computePipeline)
-        // True double buffering: read from current, write to the other buffer.
-        // This eliminates all races that were preventing reliable orbits.
+        // Double buffering: read from current buffer (which has latest CPU state),
+        // write to the other buffer with physics results.
         encoder.setBuffer(bodyBuffer[currentBufferIndex], offset: 0, index: 0) // input
         encoder.setBuffer(bodyBuffer[writeIdx],           offset: 0, index: 1) // output
         encoder.setBytes(&params, length: MemoryLayout<SimParams>.size, index: 2)
@@ -162,6 +159,9 @@ final class GravitySimulation {
                 guard let self = self else { return }
                 self.downloadBodies(from: writeIdx)
                 self.currentBufferIndex = writeIdx
+                // After downloading and switching, upload the CPU state to the new current buffer
+                // so it's in sync and ready for the next step or render
+                self.uploadBodies(to: writeIdx)
                 self.onUpdate?()
             }
         }
@@ -180,7 +180,8 @@ final class GravitySimulation {
 
     /// Re-uploads the current body data to the current GPU buffer without running physics.
     /// Call after modifying bodies' positions/velocities/selection directly (e.g., during a drag).
-    /// Only uploads to currentBufferIndex; the next physics step will copy to the other buffer.
+    /// Only uploads to currentBufferIndex; the next physics step will read from it and
+    /// write updated data to the other buffer, naturally keeping both buffers in sync.
     func rebuildGPUState() {
         uploadBodies(to: currentBufferIndex)
     }
