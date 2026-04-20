@@ -55,7 +55,7 @@ final class SimulationViewController: NSViewController {
     private var speedSlider: NSSlider!
     private var speedField: NSTextField!
     private let baseTimeStep: Float = 0.1
-    private let minSpeed: Float = 0.25
+    private let minSpeed: Float = 0.00001
     private let maxSpeed: Float = 3.0
     private let speedTickCount: Int = 12
     private var speedStep: Float { (maxSpeed - minSpeed) / Float(speedTickCount - 1) }
@@ -258,7 +258,7 @@ final class SimulationViewController: NSViewController {
         speedLabel.font      = NSFont.systemFont(ofSize: 11)
 
         speedSlider = NSSlider(value: Double(speedValue),
-                               minValue: Double(minSpeed),
+                               minValue: Double(0.25),
                                maxValue: Double(maxSpeed),
                                target: self,
                                action: #selector(speedSliderChanged(_:)))
@@ -274,8 +274,8 @@ final class SimulationViewController: NSViewController {
         let speedFormatter = NumberFormatter()
         speedFormatter.minimum = NSNumber(value: minSpeed)
         speedFormatter.maximum = NSNumber(value: maxSpeed)
-        speedFormatter.minimumFractionDigits = 2
-        speedFormatter.maximumFractionDigits = 2
+        speedFormatter.minimumFractionDigits = 5
+        speedFormatter.maximumFractionDigits = 7
 
         speedField = NSTextField(string: String(format: "%.2f", speedValue))
         speedField.alignment = .right
@@ -449,7 +449,7 @@ final class SimulationViewController: NSViewController {
         guard !isUpdatingSpeedUI else { return }
         isUpdatingSpeedUI = true
         speedSlider.doubleValue = Double(speedValue)
-        speedField.stringValue = String(format: "%.2f", speedValue)
+        speedField.stringValue = String(format: "%.7f", speedValue)
         isUpdatingSpeedUI = false
     }
 
