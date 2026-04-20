@@ -885,7 +885,10 @@ final class SimulationViewController: NSViewController {
 
 extension SimulationViewController: NSSplitViewDelegate {
     func splitViewDidResizeSubviews(_ notification: Notification) {
-        if isRestoringSplitPosition { return }
+        if isRestoringSplitPosition {
+            isRestoringSplitPosition = false
+            return
+        }
         saveSplitViewPosition()
         renderer.viewSize = metalView.drawableSize
         simulation.rebuildGPUState()
