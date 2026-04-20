@@ -274,7 +274,7 @@ final class SimulationViewController: NSViewController {
         speedField.formatter = speedFormatter
         speedField.target = self
         speedField.action = #selector(speedFieldChanged(_:))
-        speedField.sendsActionOnEndEditing = true
+        (speedField.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = true
         speedField.setContentHuggingPriority(.required, for: .horizontal)
         speedField.widthAnchor.constraint(equalToConstant: 64).isActive = true
 
