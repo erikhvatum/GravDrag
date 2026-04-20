@@ -46,6 +46,18 @@ final class SimulationViewController: NSViewController {
     private var tableScrollView: NSScrollView!
     private var showsTable: Bool = true
     private var hasPerformedInitialLayout: Bool = false
+    private let splitPositionDefaultsKey = "SimulationSplitPosition"
+
+    // MARK: Simulation speed
+    private var speedSlider: NSSlider!
+    private var speedField: NSTextField!
+    private let baseTimeStep: Float = 0.1
+    private let minSpeed: Float = 0.25
+    private let maxSpeed: Float = 3.0
+    private let speedTickCount: Int = 12
+    private var speedStep: Float { (maxSpeed - minSpeed) / Float(speedTickCount - 1) }
+    private var speedValue: Float = 1.0
+    private var isUpdatingSpeedUI = false
 
     // MARK: Interaction state
     private var toolMode:      ToolMode      = .add
@@ -91,7 +103,7 @@ final class SimulationViewController: NSViewController {
             simulation = try GravitySimulation(device: device)
             simulation.loadDemoScene()
             simulation.isPaused = true
-            simulation.timeStep = 0.1   // Larger dt makes orbital velocity changes visible immediately
+            simulation.timeStep = baseTimeStep   // Larger dt makes orbital velocity changes visible immediately
         } catch {
             fatalError("Failed to create simulation: \(error)")
         }
@@ -122,11 +134,13 @@ final class SimulationViewController: NSViewController {
 
         // Build inspector table (virtualized NSTableView)
         buildInspectorTable()
+        applySimulationSpeed(speedValue)
 
         // Use split view so the table can be toggled/collapsed with no layout thrashing
         splitView = NSSplitView()
         splitView.isVertical = true
         splitView.dividerStyle = .thin
+        splitView.delegate = self
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.addArrangedSubview(metalView)
         splitView.addArrangedSubview(tableScrollView)
@@ -165,13 +179,7 @@ final class SimulationViewController: NSViewController {
         view.window?.makeFirstResponder(view)
         if !hasPerformedInitialLayout {
             hasPerformedInitialLayout = true
-            if showsTable && splitView != nil {
-                // Make table visible by default (~32% of width)
-                let targetWidth = view.bounds.width * 0.68
-                splitView.setPosition(targetWidth, ofDividerAt: 0)
-            } else if splitView != nil {
-                splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
-            }
+            restoreSplitViewPosition()
         }
         // Ensure renderer has correct view size after layout and split positioning.
         // This prevents all bodies from appearing stacked in the center due to stale (1x1) viewSize.
@@ -235,14 +243,52 @@ final class SimulationViewController: NSViewController {
         tableButton = makeToolButton("≡", tip: "Toggle data table (T)", action: #selector(toggleTable))
         tableButton.setButtonType(.pushOnPushOff)
 
+        // Simulation speed controls
+        let speedLabel = NSTextField(labelWithString: "Speed:")
+        speedLabel.textColor = .secondaryLabelColor
+        speedLabel.font      = NSFont.systemFont(ofSize: 11)
+
+        speedSlider = NSSlider(value: Double(speedValue),
+                               minValue: Double(minSpeed),
+                               maxValue: Double(maxSpeed),
+                               target: self,
+                               action: #selector(speedSliderChanged(_:)))
+        speedSlider.numberOfTickMarks = speedTickCount
+        speedSlider.allowsTickMarkValuesOnly = true
+        speedSlider.isContinuous = true
+        speedSlider.tickMarkPosition = .below
+        speedSlider.controlSize = .small
+        speedSlider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        speedSlider.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        speedSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+
+        let speedFormatter = NumberFormatter()
+        speedFormatter.minimum = NSNumber(value: minSpeed)
+        speedFormatter.maximum = NSNumber(value: maxSpeed)
+        speedFormatter.minimumFractionDigits = 2
+        speedFormatter.maximumFractionDigits = 2
+
+        speedField = NSTextField(string: String(format: "%.2f", speedValue))
+        speedField.alignment = .right
+        speedField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        speedField.formatter = speedFormatter
+        speedField.target = self
+        speedField.action = #selector(speedFieldChanged(_:))
+        speedField.sendsActionOnEndEditing = true
+        speedField.setContentHuggingPriority(.required, for: .horizontal)
+        speedField.widthAnchor.constraint(equalToConstant: 64).isActive = true
+
+        let speedStack = NSStackView(views: [speedLabel, speedSlider, speedField])
+        speedStack.spacing = 6
+        speedStack.alignment = .centerY
+        speedStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
         // Body count
         bodyCountLabel = NSTextField(labelWithString: "0 bodies")
         bodyCountLabel.textColor = .secondaryLabelColor
         bodyCountLabel.font      = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         bodyCountLabel.alignment = .right
-
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        bodyCountLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         for v: NSView in [playPauseButton,
                           resetButton,
@@ -256,7 +302,7 @@ final class SimulationViewController: NSViewController {
                           spinLabel, spinStepper,
                           sep(),
                           tableButton,
-                          spacer,
+                          speedStack,
                           bodyCountLabel] {
             stack.addArrangedSubview(v)
         }
@@ -370,6 +416,42 @@ final class SimulationViewController: NSViewController {
         }
     }
 
+    // MARK: - Simulation speed control
+
+    private func clampedSpeed(_ value: Float) -> Float {
+        max(minSpeed, min(maxSpeed, value))
+    }
+
+    private func quantizedSpeed(_ value: Float) -> Float {
+        let clamped = clampedSpeed(value)
+        let steps = round((clamped - minSpeed) / speedStep)
+        let snapped = minSpeed + steps * speedStep
+        return clampedSpeed(snapped)
+    }
+
+    private func applySimulationSpeed(_ value: Float) {
+        let snapped = quantizedSpeed(value)
+        speedValue = snapped
+        simulation.timeStep = baseTimeStep * speedValue
+        updateSpeedControls()
+    }
+
+    private func updateSpeedControls() {
+        guard !isUpdatingSpeedUI else { return }
+        isUpdatingSpeedUI = true
+        speedSlider.doubleValue = Double(speedValue)
+        speedField.stringValue = String(format: "%.2f", speedValue)
+        isUpdatingSpeedUI = false
+    }
+
+    @objc private func speedSliderChanged(_ sender: NSSlider) {
+        applySimulationSpeed(Float(sender.doubleValue))
+    }
+
+    @objc private func speedFieldChanged(_ sender: NSTextField) {
+        applySimulationSpeed(Float(sender.doubleValue))
+    }
+
     // MARK: - HUD update
 
     func updateHUD() {
@@ -419,6 +501,7 @@ final class SimulationViewController: NSViewController {
         simulation.loadDemoScene()
         simulation.deselectAll()
         simulation.clearFocus()
+        simulation.timeStep = baseTimeStep * speedValue
         simulation.rebuildGPUState()
         camera.center = .zero
         camera.scale = 600.0  // Zoomed out 2x from the Camera default so the orbiting triangle is comfortably visible while centered on the central sphere
@@ -480,9 +563,9 @@ final class SimulationViewController: NSViewController {
 
         if showsTable {
             tableScrollView.isHidden = false
-            // Reveal right pane (roughly 1/3 of window)
-            let targetWidth = view.bounds.width * 0.68
+            let targetWidth = desiredSplitPosition()
             splitView.setPosition(targetWidth, ofDividerAt: 0)
+            saveSplitViewPosition()
         } else {
             tableScrollView.isHidden = true
             // Collapse table pane
@@ -495,6 +578,50 @@ final class SimulationViewController: NSViewController {
         updateHUD()
         if showsTable {
             updateTable()
+        }
+    }
+
+    // MARK: - Split view persistence
+
+    private func storedSplitPosition() -> CGFloat? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: splitPositionDefaultsKey) != nil else { return nil }
+        return CGFloat(defaults.double(forKey: splitPositionDefaultsKey))
+    }
+
+    private func clampedSplitPosition(_ position: CGFloat) -> CGFloat {
+        let minLeft: CGFloat = 200
+        let maxLeft = max(view.bounds.width - 150, minLeft)
+        return max(minLeft, min(position, maxLeft))
+    }
+
+    private func desiredSplitPosition() -> CGFloat {
+        let defaultWidth = view.bounds.width * 0.68
+        if let saved = storedSplitPosition() {
+            return clampedSplitPosition(saved)
+        } else {
+            return clampedSplitPosition(defaultWidth)
+        }
+    }
+
+    private func saveSplitViewPosition() {
+        guard showsTable else { return }
+        splitView.layoutSubtreeIfNeeded()
+        let position = splitView.arrangedSubviews.first?.frame.width ?? 0
+        let clamped = clampedSplitPosition(position)
+        UserDefaults.standard.set(Double(clamped), forKey: splitPositionDefaultsKey)
+    }
+
+    private func restoreSplitViewPosition() {
+        guard splitView != nil else { return }
+        if showsTable {
+            tableScrollView.isHidden = false
+            let position = desiredSplitPosition()
+            splitView.setPosition(position, ofDividerAt: 0)
+            saveSplitViewPosition()
+        } else {
+            tableScrollView.isHidden = true
+            splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
         }
     }
 
@@ -737,6 +864,16 @@ final class SimulationViewController: NSViewController {
         }
         tableView.selectRowIndexes(indices, byExtendingSelection: false)
         isSyncingSelection = false
+    }
+}
+
+// MARK: - NSSplitViewDelegate
+
+extension SimulationViewController: NSSplitViewDelegate {
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        saveSplitViewPosition()
+        renderer.viewSize = metalView.drawableSize
+        simulation.rebuildGPUState()
     }
 }
 

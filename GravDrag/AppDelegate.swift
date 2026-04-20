@@ -10,16 +10,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         simViewController = SimulationViewController()
 
+        let defaultFrame = NSRect(x: 0, y: 0, width: 1280, height: 800)
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+            contentRect: defaultFrame,
             styleMask: styleMask,
             backing: .buffered,
             defer: false
         )
+        window.setFrameAutosaveName("MainWindowFrame")
         window.title = "GravDrag"
         window.contentViewController = simViewController
-        window.center()
+        if !window.setFrameUsingName("MainWindowFrame") {
+            window.center()
+        }
         window.makeKeyAndOrderFront(nil)
         window.minSize = NSSize(width: 640, height: 480)
     }
