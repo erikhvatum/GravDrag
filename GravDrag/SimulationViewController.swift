@@ -606,7 +606,6 @@ final class SimulationViewController: NSViewController {
 
     private func saveSplitViewPosition() {
         guard showsTable else { return }
-        splitView.layoutSubtreeIfNeeded()
         let position = splitView.arrangedSubviews.first?.frame.width ?? 0
         let clamped = clampedSplitPosition(position)
         UserDefaults.standard.set(Double(clamped), forKey: splitPositionDefaultsKey)
