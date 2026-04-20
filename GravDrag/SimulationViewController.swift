@@ -494,6 +494,7 @@ final class SimulationViewController: NSViewController {
         let val = Float(sender.doubleValue)
         simulation.bodies.filter { $0.isSelected }.forEach { $0.angularVelocity = val }
         simulation.rebuildGPUState()
+        updateTable()
     }
 
     @objc private func toggleTable(_ sender: Any? = nil) {
@@ -623,6 +624,7 @@ final class SimulationViewController: NSViewController {
             selected.forEach { $0.angularVelocity += delta }
             simulation.rebuildGPUState()
             updateHUD()
+            updateTable()
         } else {
             // Pan camera (world units per scroll tick proportional to zoom level)
             let pan: Float = camera.scale * 0.003
