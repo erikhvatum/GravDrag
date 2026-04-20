@@ -14,10 +14,13 @@ struct Body {
     float  momentOfInertia; // 4
     int    vertexOffset;    // 4
     int    vertexCount;     // 4
-    float4 color;           // 16
+    float  colorR;          // 4
+    float  colorG;          // 4
+    float  colorB;          // 4
+    float  colorA;          // 4
     int    isStatic;        // 4
     int    isSelected;      // 4
-    // 64 bytes total
+    // 64 bytes total — matches Swift GPUBody exactly (no float4 padding)
 };
 
 struct SimParams {
@@ -106,7 +109,7 @@ vertex BodyVertOut bodyVert(
 
     BodyVertOut out;
     out.position = float4(ndcX, ndcY, 0.5f, 1.0f);
-    out.color    = b.color;
+    out.color    = float4(b.colorR, b.colorG, b.colorB, b.colorA);
     out.selected = float(b.isSelected);
     return out;
 }
