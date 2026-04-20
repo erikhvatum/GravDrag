@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var window: NSWindow!
     private var simViewController: SimulationViewController!
+    private let windowFrameDefaultsKey = "MainWindowFrame"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMainMenu()
@@ -18,17 +19,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
+        window.delegate = self
         window.setFrameAutosaveName("MainWindowFrame")
         window.title = "GravDrag"
         window.contentViewController = simViewController
-        if !window.setFrameUsingName("MainWindowFrame") {
-            window.center()
-        }
+        restoreWindowFrame()
         window.makeKeyAndOrderFront(nil)
         window.minSize = NSSize(width: 640, height: 480)
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        saveWindowFrame()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    // MARK: - Window frame persistence
+
+    private func restoreWindowFrame() {
+        let defaults = UserDefaults.standard
+        if let frameString = defaults.string(forKey: windowFrameDefaultsKey) {
+            window.setFrame(NSRectFromString(frameString), display: false)
+        } else if !window.setFrameUsingName("MainWindowFrame") {
+            window.center()
+        }
+    }
+
+    private func saveWindowFrame() {
+        let frameString = NSStringFromRect(window.frame)
+        UserDefaults.standard.set(frameString, forKey: windowFrameDefaultsKey)
+    }
 
     // MARK: - Menu
 
@@ -61,5 +81,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         simMenu.addItem(withTitle: "Reset", action: #selector(SimulationViewController.resetSimulation(_:)), keyEquivalent: "r")
 
         NSApplication.shared.mainMenu = mainMenu
+    }
+}
+
+// MARK: - NSWindowDelegate
+
+extension AppDelegate: NSWindowDelegate {
+    func windowDidMove(_ notification: Notification) {
+        saveWindowFrame()
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        saveWindowFrame()
     }
 }

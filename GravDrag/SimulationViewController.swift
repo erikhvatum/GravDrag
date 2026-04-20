@@ -47,6 +47,7 @@ final class SimulationViewController: NSViewController {
     private var showsTable: Bool = true
     private var hasPerformedInitialLayout: Bool = false
     private let splitPositionDefaultsKey = "SimulationSplitPosition"
+    private let tableVisibilityDefaultsKey = "SimulationShowsTable"
 
     // MARK: Simulation speed
     private var speedSlider: NSSlider!
@@ -128,6 +129,11 @@ final class SimulationViewController: NSViewController {
         // This must be done *after* the renderer exists.
         camera.center = .zero
         camera.scale = 600.0
+
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: tableVisibilityDefaultsKey) != nil {
+            showsTable = defaults.bool(forKey: tableVisibilityDefaultsKey)
+        }
 
         // Build toolbar FIRST so we can anchor metalView below it
         buildToolbar()
@@ -560,6 +566,7 @@ final class SimulationViewController: NSViewController {
 
     @objc private func toggleTable(_ sender: Any? = nil) {
         showsTable.toggle()
+        saveTableVisibility()
 
         if showsTable {
             tableScrollView.isHidden = false
@@ -579,6 +586,10 @@ final class SimulationViewController: NSViewController {
         if showsTable {
             updateTable()
         }
+    }
+
+    private func saveTableVisibility() {
+        UserDefaults.standard.set(showsTable, forKey: tableVisibilityDefaultsKey)
     }
 
     // MARK: - Split view persistence
