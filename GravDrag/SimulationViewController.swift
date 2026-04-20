@@ -48,6 +48,7 @@ final class SimulationViewController: NSViewController {
     private var hasPerformedInitialLayout: Bool = false
     private let splitPositionDefaultsKey = "SimulationSplitPosition"
     private let tableVisibilityDefaultsKey = "SimulationShowsTable"
+    private var isRestoringSplitPosition = false
 
     // MARK: Simulation speed
     private var speedSlider: NSSlider!
@@ -626,9 +627,13 @@ final class SimulationViewController: NSViewController {
         guard splitView != nil else { return }
         if showsTable {
             tableScrollView.isHidden = false
+            isRestoringSplitPosition = true
             let position = desiredSplitPosition()
             splitView.setPosition(position, ofDividerAt: 0)
-            saveSplitViewPosition()
+            DispatchQueue.main.async { [weak self] in
+                self?.isRestoringSplitPosition = false
+                self?.saveSplitViewPosition()
+            }
         } else {
             tableScrollView.isHidden = true
             splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
@@ -881,6 +886,7 @@ final class SimulationViewController: NSViewController {
 
 extension SimulationViewController: NSSplitViewDelegate {
     func splitViewDidResizeSubviews(_ notification: Notification) {
+        if isRestoringSplitPosition { return }
         saveSplitViewPosition()
         renderer.viewSize = metalView.drawableSize
         simulation.rebuildGPUState()
