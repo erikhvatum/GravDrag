@@ -127,7 +127,9 @@ final class GravitySimulation {
         guard !isPaused, !bodies.isEmpty else { return }
 
         let writeIdx = 1 - currentBufferIndex
-        uploadBodies(to: writeIdx)   // ensure write buffer starts with latest CPU state
+        // Upload current CPU state to write buffer so physics shader has latest metadata
+        // (selection, color, etc.) even though it only updates position/velocity/angle.
+        uploadBodies(to: writeIdx)
 
         var params = SimParams(
             bodyCount: UInt32(bodies.count),
@@ -155,13 +157,11 @@ final class GravitySimulation {
         encoder.endEncoding()
 
         cmdBuf.addCompletedHandler { [weak self] _ in
-            // Move download + rebuild to main queue so renderer and UI stay perfectly synchronized.
-            // This also guarantees the body buffer the renderer sees is never stale.
+            // Download physics results and switch buffer index on main queue for perfect sync.
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.downloadBodies(from: writeIdx)
                 self.currentBufferIndex = writeIdx
-                self.rebuildGPUState()   // push fresh CPU state (positions, selection flags, etc.) back to GPU
                 self.onUpdate?()
             }
         }
