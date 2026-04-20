@@ -49,6 +49,7 @@ final class SimulationViewController: NSViewController {
     private let splitPositionDefaultsKey = "SimulationSplitPosition"
     private let tableVisibilityDefaultsKey = "SimulationShowsTable"
     private var isRestoringSplitPosition = false
+    private var suppressSplitSaveUntilReady = true
 
     // MARK: Simulation speed
     private var speedSlider: NSSlider!
@@ -192,6 +193,7 @@ final class SimulationViewController: NSViewController {
         // This prevents all bodies from appearing stacked in the center due to stale (1x1) viewSize.
         renderer.viewSize = metalView.drawableSize
         simulation.rebuildGPUState()
+        suppressSplitSaveUntilReady = false
     }
 
     // MARK: - Toolbar construction
@@ -617,7 +619,7 @@ final class SimulationViewController: NSViewController {
     }
 
     private func saveSplitViewPosition() {
-        guard showsTable else { return }
+        guard showsTable, !suppressSplitSaveUntilReady else { return }
         let position = splitView.arrangedSubviews.first?.frame.width ?? 0
         let clamped = clampedSplitPosition(position)
         UserDefaults.standard.set(Double(clamped), forKey: splitPositionDefaultsKey)
