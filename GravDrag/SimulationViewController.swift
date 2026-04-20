@@ -43,7 +43,7 @@ final class SimulationViewController: NSViewController {
     private var splitView: NSSplitView!
     private var tableView: NSTableView!
     private var tableScrollView: NSScrollView!
-    private var showsTable: Bool = false
+    private var showsTable: Bool = true
     private var hasPerformedInitialLayout: Bool = false
 
     // MARK: Interaction state
@@ -89,6 +89,7 @@ final class SimulationViewController: NSViewController {
         do {
             simulation = try GravitySimulation(device: device)
             simulation.loadDemoScene()
+            simulation.isPaused = true
             simulation.timeStep = 0.1   // Larger dt makes orbital velocity changes visible immediately
         } catch {
             fatalError("Failed to create simulation: \(error)")
@@ -157,7 +158,11 @@ final class SimulationViewController: NSViewController {
         view.window?.makeFirstResponder(view)
         if !hasPerformedInitialLayout {
             hasPerformedInitialLayout = true
-            if !showsTable && splitView != nil {
+            if showsTable && splitView != nil {
+                // Make table visible by default (~32% of width)
+                let targetWidth = view.bounds.width * 0.68
+                splitView.setPosition(targetWidth, ofDividerAt: 0)
+            } else if splitView != nil {
                 splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
             }
         }

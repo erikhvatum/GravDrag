@@ -4,8 +4,8 @@ import simd
 
 // MARK: - Simulation parameters
 
-private let kGravitationalConstant: Float = 6.674e-4  // scaled for visibility
-private let kSoftening:             Float = 20.0       // pixels, prevents singularity
+private let kGravitationalConstant: Float = 800.0   // tuned so that v≈795 at r=380 gives stable ~3 s circular orbit with chosen masses
+private let kSoftening:             Float = 20.0
 private let kMaxBodies:             Int   = 512
 private let kMaxVerticesPerBody:    Int   = 64
 private let kMaxTotalVertices:      Int   = kMaxBodies * kMaxVerticesPerBody
@@ -127,7 +127,7 @@ final class GravitySimulation {
         guard !isPaused, !bodies.isEmpty else { return }
 
         let writeIdx = 1 - currentBufferIndex
-        uploadBodies(to: writeIdx)
+        uploadBodies(to: writeIdx)   // ensure write buffer starts with latest CPU state
 
         var params = SimParams(
             bodyCount: UInt32(bodies.count),
@@ -140,8 +140,10 @@ final class GravitySimulation {
               let encoder  = cmdBuf.makeComputeCommandEncoder() else { return }
 
         encoder.setComputePipelineState(computePipeline)
-        encoder.setBuffer(bodyBuffer[writeIdx], offset: 0, index: 0)
-        encoder.setBuffer(vertexBuffer,         offset: 0, index: 1)
+        // True double buffering: read from current, write to the other buffer.
+        // This eliminates all races that were preventing reliable orbits.
+        encoder.setBuffer(bodyBuffer[currentBufferIndex], offset: 0, index: 0) // input
+        encoder.setBuffer(bodyBuffer[writeIdx],           offset: 0, index: 1) // output
         encoder.setBytes(&params, length: MemoryLayout<SimParams>.size, index: 2)
 
         let threadCount = MTLSize(width: bodies.count, height: 1, depth: 1)
@@ -153,9 +155,15 @@ final class GravitySimulation {
         encoder.endEncoding()
 
         cmdBuf.addCompletedHandler { [weak self] _ in
-            self?.downloadBodies(from: writeIdx)
-            self?.currentBufferIndex = writeIdx
-            self?.onUpdate?()
+            // Move download + rebuild to main queue so renderer and UI stay perfectly synchronized.
+            // This also guarantees the body buffer the renderer sees is never stale.
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.downloadBodies(from: writeIdx)
+                self.currentBufferIndex = writeIdx
+                self.rebuildGPUState()   // push fresh CPU state (positions, selection flags, etc.) back to GPU
+                self.onUpdate?()
+            }
         }
         cmdBuf.commit()
     }
@@ -217,36 +225,25 @@ final class GravitySimulation {
 
     func loadDemoScene() {
         bodies.removeAll()
-        let colors: [SIMD4<Float>] = [
-            SIMD4<Float>(0.9, 0.4, 0.3, 1),
-            SIMD4<Float>(0.4, 0.8, 0.5, 1),
-            SIMD4<Float>(0.4, 0.6, 1.0, 1),
-            SIMD4<Float>(1.0, 0.8, 0.3, 1),
-            SIMD4<Float>(0.8, 0.4, 0.9, 1),
-        ]
-        let positions: [(Float, Float, Float, Float)] = [
-            // x,    y,    vx,   vy
-            ( 0,    200,  120,   0),
-            ( 0,   -200, -120,   0),
-            ( 200,   0,    0,  120),
-            (-200,   0,    0, -120),
-        ]
-        for (i, pos) in positions.enumerated() {
-            let b = Body.makeCircle(
-                position: SIMD2<Float>(pos.0, pos.1),
-                radius: 20 + Float(i) * 5,
-                color: colors[i % colors.count]
-            )
-            b.velocity = SIMD2<Float>(pos.2, pos.3)
-            addBody(b)
-        }
-        // Heavier central body
+
+        // Heavy central sphere (yellow-ish)
         let central = Body.makeCircle(
             position: .zero,
-            radius: 45,
-            color: SIMD4<Float>(1.0, 0.9, 0.5, 1)
+            radius: 48,
+            color: SIMD4<Float>(1.0, 0.88, 0.45, 1.0),
+            segments: 48
         )
-        central.mass *= 10
+        central.mass *= 40
         addBody(central)
+
+        // Lighter orbiting triangle (blue-cyan)
+        let triangle = Body.makeTriangle(
+            position: SIMD2<Float>(380, 0),
+            radius: 26,
+            color: SIMD4<Float>(0.35, 0.75, 1.0, 1.0)
+        )
+        triangle.velocity = SIMD2<Float>(0, 795)   // produces one orbit per ~3 s with the tuned G, dt, and central mass
+        triangle.angularVelocity = 5.0
+        addBody(triangle)
     }
 }

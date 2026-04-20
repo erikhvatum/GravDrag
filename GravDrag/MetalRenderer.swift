@@ -157,6 +157,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let bodyBuffer   = sim.currentBodyBuffer
         let vertexBuffer = sim.sharedVertexBuffer
 
+        encoder.setCullMode(.none)   // Critical fix: prevents fill geometry from disappearing due to winding/order issues
+
         // ── Draw each body (filled polygon via triangle list) ──────────────
 
         encoder.setRenderPipelineState(bodyRenderPipeline)
@@ -294,5 +296,4 @@ extension Body {
         Body._caches.removeValue(forKey: ObjectIdentifier(self))
     }
 }
-
 

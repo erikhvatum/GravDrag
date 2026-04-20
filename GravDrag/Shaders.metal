@@ -35,24 +35,28 @@ struct RenderUniforms {
 
 // ─────────────────────────────────────────────────────────
 // Compute: N-body gravity + semi-implicit Euler integration
+// Now uses separate input/output buffers to eliminate all races.
 // ─────────────────────────────────────────────────────────
 
 kernel void physicsStep(
-    device Body* bodies          [[ buffer(0) ]],
-    constant float2* vertices    [[ buffer(1) ]],   // unused here; reserved
+    constant Body* inputBodies   [[ buffer(0) ]],
+    device Body*   outputBodies  [[ buffer(1) ]],
     constant SimParams& params   [[ buffer(2) ]],
     uint id [[ thread_position_in_grid ]])
 {
     if (id >= params.bodyCount) return;
 
-    Body self = bodies[id];
-    if (self.isStatic) return;
+    Body self = inputBodies[id];
+    if (self.isStatic) {
+        outputBodies[id] = self;
+        return;
+    }
 
     float2 force = float2(0.0f, 0.0f);
 
     for (uint i = 0; i < params.bodyCount; i++) {
         if (i == id) continue;
-        Body other = bodies[i];
+        Body other = inputBodies[i];
         float2 diff = other.position - self.position;
         float distSq = dot(diff, diff) + params.softening * params.softening;
         float invDist = rsqrt(distSq);
@@ -62,9 +66,12 @@ kernel void physicsStep(
 
     // Semi-implicit Euler
     float2 accel = force / self.mass;
-    bodies[id].velocity += accel * params.dt;
-    bodies[id].position += bodies[id].velocity * params.dt;
-    bodies[id].angle    += bodies[id].angularVel * params.dt;
+    Body out = self;
+    out.velocity += accel * params.dt;
+    out.position += out.velocity * params.dt;
+    out.angle    += out.angularVel * params.dt;
+
+    outputBodies[id] = out;
 }
 
 // ─────────────────────────────────────────────────────────
