@@ -29,21 +29,19 @@ struct SimParams {
     uint  bodyCount;
     float dt;
     float G;
-    float softening;  // prevents singularity at r→0
+    float softening;
 };
 
 struct RenderUniforms {
-    float2 cameraCenter; // world-space position at screen center
-    float  cameraScale;  // world-units per NDC unit (half-screen)
-    float  aspectRatio;  // width / height
+    float2 cameraCenter;
+    float  cameraScale;
+    float  aspectRatio;
 };
 
 // ─────────────────────────────────────────────────────────
-// Compute: N-body gravity + semi-implicit Euler integration + elastic collisions
-// Now uses separate input/output buffers to eliminate all races.
+// Helper Functions
 // ─────────────────────────────────────────────────────────
 
-// Helper: compute bounding radius from vertex data
 float computeBoundingRadius(constant float2* vertices, int offset, int count) {
     float maxDist = 0.0f;
     for (int i = 0; i < count; i++) {
@@ -54,32 +52,22 @@ float computeBoundingRadius(constant float2* vertices, int offset, int count) {
     return maxDist;
 }
 
-// Helper: check if two circles collide and resolve with elastic collision
 bool resolveCircleCollision(thread Body& self, Body other, float selfRadius, float otherRadius) {
     float2 diff = other.position - self.position;
     float dist = length(diff);
     float minDist = selfRadius + otherRadius;
 
     if (dist < minDist && dist > 0.001f) {
-        // Collision detected
         float2 normal = diff / dist;
-
-        // Separate the bodies (move self away from other)
         float overlap = minDist - dist;
         self.position -= normal * (overlap * 0.5f);
 
-        // Elastic collision response (100% elasticity, conserve momentum and energy)
-        // Relative velocity
         float2 relVel = self.velocity - other.velocity;
         float velAlongNormal = dot(relVel, normal);
 
-        // Don't resolve if velocities are separating
         if (velAlongNormal > 0.0f) return true;
 
-        // Calculate impulse scalar (perfectly elastic: restitution = 1.0)
         float impulse = -(2.0f * velAlongNormal) / (1.0f / self.mass + 1.0f / other.mass);
-
-        // Apply impulse to self (other body handled in its own thread)
         float2 impulseVec = impulse * normal / self.mass;
         self.velocity += impulseVec;
 
@@ -88,23 +76,25 @@ bool resolveCircleCollision(thread Body& self, Body other, float selfRadius, flo
     return false;
 }
 
-kernel void physicsStep(
-    constant Body* inputBodies   [[ buffer(0) ]],
-    device Body*   outputBodies  [[ buffer(1) ]],
-    constant SimParams& params   [[ buffer(2) ]],
-    constant float2* vertices    [[ buffer(3) ]],
+// ─────────────────────────────────────────────────────────
+// Compute: Two-Pass Velocity Verlet Integration
+// ─────────────────────────────────────────────────────────
+
+kernel void verletPass1(
+    constant Body* inputBodies        [[ buffer(0) ]],
+    device   Body* intermediateBodies [[ buffer(1) ]],
+    constant SimParams& params        [[ buffer(2) ]],
     uint id [[ thread_position_in_grid ]])
 {
     if (id >= params.bodyCount) return;
+    
     Body self = inputBodies[id];
     if (self.isStatic) {
-        outputBodies[id] = self;
+        intermediateBodies[id] = self;
         return;
     }
 
-    float selfRadius = computeBoundingRadius(vertices, self.vertexOffset, self.vertexCount);
-
-    // --- First acceleration at current position ---
+    // 1. Calculate initial acceleration a(t)
     float2 force = float2(0.0f, 0.0f);
     for (uint i = 0; i < params.bodyCount; i++) {
         if (i == id) continue;
@@ -117,42 +107,57 @@ kernel void physicsStep(
     }
     float2 accel = force / self.mass;
 
-    // --- Velocity Verlet (leapfrog) integration ---
-    Body out = self;
+    // 2. Velocity half-kick: v(t + dt/2) = v(t) + a(t) * dt/2
+    self.velocity += accel * (0.5f * params.dt);
 
-    // Half-kick velocity
-    out.velocity += accel * (0.5f * params.dt);
+    // 3. Full position step: p(t + dt) = p(t) + v(t + dt/2) * dt
+    self.position += self.velocity * params.dt;
+    self.angle    += self.angularVel * params.dt;
 
-    // Full position drift
-    out.position += out.velocity * params.dt;
+    intermediateBodies[id] = self;
+}
 
-    // Recompute acceleration at *new* position
-    force = float2(0.0f, 0.0f);
+kernel void verletPass2(
+    constant Body* intermediateBodies [[ buffer(0) ]],
+    device   Body* outputBodies       [[ buffer(1) ]],
+    constant SimParams& params        [[ buffer(2) ]],
+    constant float2* vertices         [[ buffer(3) ]],
+    uint id [[ thread_position_in_grid ]])
+{
+    if (id >= params.bodyCount) return;
+    
+    Body self = intermediateBodies[id];
+    if (self.isStatic) {
+        outputBodies[id] = self;
+        return;
+    }
+
+    // 1. Calculate new acceleration a(t + dt) using EVERYONE'S new position
+    float2 force = float2(0.0f, 0.0f);
     for (uint i = 0; i < params.bodyCount; i++) {
         if (i == id) continue;
-        Body other = inputBodies[i];
-        float2 diff = other.position - out.position;   // note: new self position
+        Body other = intermediateBodies[i]; // Reading updated positions
+        float2 diff = other.position - self.position;
         float distSq = dot(diff, diff) + params.softening * params.softening;
         float invDist = rsqrt(distSq);
         float forceMag = params.G * self.mass * other.mass * invDist * invDist;
         force += forceMag * (diff * invDist);
     }
-    accel = force / self.mass;
+    float2 accel = force / self.mass;
 
-    // Second half-kick velocity
-    out.velocity += accel * (0.5f * params.dt);
+    // 2. Second half-kick: v(t + dt) = v(t + dt/2) + a(t + dt) * dt/2
+    self.velocity += accel * (0.5f * params.dt);
 
-    out.angle += out.angularVel * params.dt;
-
-    // Collision resolution (still optional—consider disabling for rosettes)
+    // 3. Collisions
+    float selfRadius = computeBoundingRadius(vertices, self.vertexOffset, self.vertexCount);
     for (uint i = 0; i < params.bodyCount; i++) {
         if (i == id) continue;
-        Body other = inputBodies[i];
+        Body other = intermediateBodies[i];
         float otherRadius = computeBoundingRadius(vertices, other.vertexOffset, other.vertexCount);
-        resolveCircleCollision(out, other, selfRadius, otherRadius);
+        resolveCircleCollision(self, other, selfRadius, otherRadius);
     }
 
-    outputBodies[id] = out;
+    outputBodies[id] = self;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -162,38 +167,33 @@ kernel void physicsStep(
 struct BodyVertOut {
     float4 position [[ position ]];
     float4 color;
-    float  selected; // 0 or 1
+    float  selected;
 };
 
 vertex BodyVertOut bodyVert(
     uint                    vid      [[ vertex_id ]],
-    constant float2*        verts    [[ buffer(0) ]],
-    constant Body*          bodies   [[ buffer(1) ]],
+    constant float2* verts    [[ buffer(0) ]],
+    constant Body* bodies   [[ buffer(1) ]],
     constant RenderUniforms& uniforms[[ buffer(2) ]],
     constant int&           bodyIdx  [[ buffer(3) ]])
 {
     Body b = bodies[bodyIdx];
     float2 local = verts[b.vertexOffset + vid];
 
-    // Rotate
     float c = cos(b.angle), s = sin(b.angle);
     float2 world = b.position + float2(local.x * c - local.y * s,
                                        local.x * s + local.y * c);
 
-    // World → NDC  (camera is center-based)
     float2 offset = (world - uniforms.cameraCenter) / uniforms.cameraScale;
-    float ndcX = offset.x;
-    float ndcY = offset.y * uniforms.aspectRatio; // correct for non-square viewport
-
+    
     BodyVertOut out;
-    out.position = float4(ndcX, ndcY, 0.5f, 1.0f);
+    out.position = float4(offset.x, offset.y * uniforms.aspectRatio, 0.5f, 1.0f);
     out.color    = float4(b.colorR, b.colorG, b.colorB, b.colorA);
     out.selected = float(b.isSelected);
     return out;
 }
 
 fragment float4 bodyFrag(BodyVertOut in [[ stage_in ]]) {
-    // Brighten selected bodies slightly
     float3 c = in.color.rgb + in.selected * 0.25f;
     return float4(c, in.color.a);
 }
@@ -209,13 +209,12 @@ struct OutlineVertOut {
 
 vertex OutlineVertOut outlineVert(
     uint                    vid      [[ vertex_id ]],
-    constant float2*        verts    [[ buffer(0) ]],
-    constant Body*          bodies   [[ buffer(1) ]],
+    constant float2* verts    [[ buffer(0) ]],
+    constant Body* bodies   [[ buffer(1) ]],
     constant RenderUniforms& uniforms[[ buffer(2) ]],
     constant int&           bodyIdx  [[ buffer(3) ]])
 {
     Body b = bodies[bodyIdx];
-    // Repeat first vertex at end to close the loop
     int count = b.vertexCount;
     int idx   = vid % count;
     float2 local = verts[b.vertexOffset + idx];
@@ -227,7 +226,7 @@ vertex OutlineVertOut outlineVert(
     float2 offset = (world - uniforms.cameraCenter) / uniforms.cameraScale;
     OutlineVertOut out;
     out.position = float4(offset.x, offset.y * uniforms.aspectRatio, 0.5f, 1.0f);
-    out.color    = float4(1.0f, 0.85f, 0.2f, 1.0f); // yellow selection
+    out.color    = float4(1.0f, 0.85f, 0.2f, 1.0f);
     return out;
 }
 
@@ -237,7 +236,6 @@ fragment float4 outlineFrag(OutlineVertOut in [[ stage_in ]]) {
 
 // ─────────────────────────────────────────────────────────
 // Vertex / fragment: 2-D UI overlay (selection rect / lasso)
-// Vertices are passed as NDC directly.
 // ─────────────────────────────────────────────────────────
 
 struct UIVertOut {
@@ -246,7 +244,7 @@ struct UIVertOut {
 };
 
 vertex UIVertOut uiVert(
-    uint            vid   [[ vertex_id ]],
+    uint            vid  [[ vertex_id ]],
     constant float2* verts[[ buffer(0) ]],
     constant float4& color[[ buffer(1) ]])
 {

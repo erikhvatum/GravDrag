@@ -11,10 +11,10 @@ private let kMaxVerticesPerBody:    Int   = 64
 private let kMaxTotalVertices:      Int   = kMaxBodies * kMaxVerticesPerBody
 
 struct SimParams {           // mirrors Metal struct
-    var bodyCount:   UInt32
-    var dt:          Float
-    var G:           Float
-    var softening:   Float
+    var bodyCount:  UInt32
+    var dt:         Float
+    var G:          Float
+    var softening:  Float
 }
 
 // MARK: - GravitySimulation
@@ -32,11 +32,14 @@ final class GravitySimulation {
 
     private let device:          MTLDevice
     private let commandQueue:    MTLCommandQueue
-    private let computePipeline: MTLComputePipelineState
+    private let pipelinePass1:   MTLComputePipelineState
+    private let pipelinePass2:   MTLComputePipelineState
 
     /// Double-buffered body buffer (GPU writes, CPU reads)
-    private var bodyBuffer:   [MTLBuffer]
-    private var vertexBuffer: MTLBuffer      // local-space vertices for all bodies
+    private var bodyBuffer:         [MTLBuffer]
+    /// Mid-step buffer for Velocity Verlet (GPU only)
+    private var intermediateBuffer: MTLBuffer
+    private var vertexBuffer:       MTLBuffer      // local-space vertices for all bodies
 
     private var currentBufferIndex = 0
 
@@ -50,15 +53,23 @@ final class GravitySimulation {
         self.device       = device
         self.commandQueue = device.makeCommandQueue()!
 
-        let library  = try device.makeDefaultLibrary(bundle: .main)
-        let fn       = library.makeFunction(name: "physicsStep")!
-        computePipeline = try device.makeComputePipelineState(function: fn)
+        let library = try device.makeDefaultLibrary(bundle: .main)
+        
+        // Load the two-pass Verlet functions
+        let fn1 = library.makeFunction(name: "verletPass1")!
+        let fn2 = library.makeFunction(name: "verletPass2")!
+        
+        pipelinePass1 = try device.makeComputePipelineState(function: fn1)
+        pipelinePass2 = try device.makeComputePipelineState(function: fn2)
 
         // Allocate double-buffered body buffer
         let bodySize = MemoryLayout<GPUBody>.stride * kMaxBodies
         bodyBuffer = (0..<2).map { _ in
             device.makeBuffer(length: bodySize, options: .storageModeShared)!
         }
+        
+        // Allocate intermediate buffer for mid-step Verlet state (Private storage is faster since CPU never reads it)
+        intermediateBuffer = device.makeBuffer(length: bodySize, options: .storageModePrivate)!
 
         let vertexSize = MemoryLayout<SIMD2<Float>>.stride * kMaxTotalVertices
         vertexBuffer = device.makeBuffer(length: vertexSize, options: .storageModeShared)!
@@ -162,30 +173,34 @@ final class GravitySimulation {
         guard let cmdBuf   = commandQueue.makeCommandBuffer(),
               let encoder  = cmdBuf.makeComputeCommandEncoder() else { return }
 
-        encoder.setComputePipelineState(computePipeline)
-        // Double buffering: read from current buffer (which has latest CPU state),
-        // write to the other buffer with physics results.
-        encoder.setBuffer(bodyBuffer[currentBufferIndex], offset: 0, index: 0) // input
-        encoder.setBuffer(bodyBuffer[writeIdx],           offset: 0, index: 1) // output
-        encoder.setBytes(&params, length: MemoryLayout<SimParams>.size, index: 2)
-        encoder.setBuffer(vertexBuffer, offset: 0, index: 3) // vertex buffer for collision detection
-
         let threadCount = MTLSize(width: bodies.count, height: 1, depth: 1)
         let threadGroupSize = MTLSize(
-            width: min(computePipeline.maxTotalThreadsPerThreadgroup, bodies.count),
+            width: min(pipelinePass1.maxTotalThreadsPerThreadgroup, bodies.count),
             height: 1, depth: 1
         )
+
+        // --- VERLET PASS 1: Position and Half-Velocity ---
+        encoder.setComputePipelineState(pipelinePass1)
+        encoder.setBuffer(bodyBuffer[currentBufferIndex], offset: 0, index: 0) // input
+        encoder.setBuffer(intermediateBuffer,             offset: 0, index: 1) // output (mid-step)
+        encoder.setBytes(&params, length: MemoryLayout<SimParams>.size, index: 2)
         encoder.dispatchThreads(threadCount, threadsPerThreadgroup: threadGroupSize)
+
+        // --- VERLET PASS 2: Final Velocity Kick & Collisions ---
+        encoder.setComputePipelineState(pipelinePass2)
+        encoder.setBuffer(intermediateBuffer,    offset: 0, index: 0) // input (mid-step)
+        encoder.setBuffer(bodyBuffer[writeIdx],  offset: 0, index: 1) // output (final step)
+        encoder.setBytes(&params, length: MemoryLayout<SimParams>.size, index: 2)
+        encoder.setBuffer(vertexBuffer, offset: 0, index: 3) // collision vertex data
+        encoder.dispatchThreads(threadCount, threadsPerThreadgroup: threadGroupSize)
+
         encoder.endEncoding()
 
         cmdBuf.addCompletedHandler { [weak self] _ in
-            // Download physics results and switch buffer index on main queue for perfect sync.
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.downloadBodies(from: writeIdx)
                 self.currentBufferIndex = writeIdx
-                // After downloading and switching, upload the CPU state to the new current buffer
-                // so it's in sync and ready for the next step or render
                 self.uploadBodies(to: writeIdx)
                 self.onUpdate?()
             }
@@ -203,10 +218,6 @@ final class GravitySimulation {
 
     // MARK: - Public GPU state refresh
 
-    /// Re-uploads the current body data to the current GPU buffer without running physics.
-    /// Call after modifying bodies' positions/velocities/selection directly (e.g., during a drag).
-    /// Only uploads to currentBufferIndex; the next physics step will read from it and
-    /// write updated data to the other buffer, naturally keeping both buffers in sync.
     func rebuildGPUState() {
         uploadBodies(to: currentBufferIndex)
     }
@@ -225,9 +236,6 @@ final class GravitySimulation {
                 offset += 1
             }
         }
-        // Re-upload body buffer to BOTH buffers so vertex offsets are current in both.
-        // This is critical because the vertex buffer is shared, and double-buffering
-        // the body data means both buffers need consistent vertex offset information.
         uploadBodies(to: 0)
         uploadBodies(to: 1)
     }
@@ -256,7 +264,6 @@ final class GravitySimulation {
     func loadDemoScene() {
         bodies.removeAll()
 
-        // Heavy central sphere (yellow-ish)
         let central = Body.makeCircle(
             position: .zero,
             radius: 48,
@@ -264,16 +271,15 @@ final class GravitySimulation {
             segments: 48
         )
         central.mass *= 40
-        central.isFocused = true  // Focus on central object by default
+        central.isFocused = true
         addBody(central)
 
-        // Lighter orbiting triangle (blue-cyan)
         let triangle = Body.makeTriangle(
             position: SIMD2<Float>(380, 0),
             radius: 26,
             color: SIMD4<Float>(0.35, 0.75, 1.0, 1.0)
         )
-        triangle.velocity = SIMD2<Float>(0, 795)   // produces one orbit per ~3 s with the tuned G, dt, and central mass
+        triangle.velocity = SIMD2<Float>(0, 795)
         triangle.angularVelocity = 5.0
         addBody(triangle)
     }
