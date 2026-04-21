@@ -73,7 +73,6 @@ final class SimulationViewController: NSViewController {
     private var groupDragPreVelocities: [SIMD2<Float>] = []  // velocities before drag started
     private var dragStartWorld: SIMD2<Float> = .zero
     private var lastDragWorld: SIMD2<Float>  = .zero
-    private var isVKeyHeld: Bool = false  // tracks if V key is held during drag
 
     // Panning state (middle mouse button)
     private var isPanning: Bool = false
