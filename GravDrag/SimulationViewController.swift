@@ -999,32 +999,49 @@ final class SimulationViewController: NSViewController {
     }
 
     private func addRosetteAt(_ center: SIMD2<Float>) {
-        // Calculate central mass needed for Keplerian orbits
-        // For circular orbit: v^2 = G * M / r
-        // We'll use the gravitational constant from the simulation
-        let G: Float = 800.0  // matches kGravitationalConstant in GravitySimulation
-
-        for i in 0..<rosetteCount {
-            let angle = Float(i) * 2.0 * Float.pi / Float(rosetteCount)
+        let G: Float = 800.0
+        
+        let N = rosetteCount
+        guard N >= 2 else {
+            // N=1 is not a rosette (no other bodies to provide gravity)
+            return
+        }
+        
+        // Compute the exact geometric factor C(N) for a regular N-gon of equal masses.
+        // This is the standard closed-form expression for a Klemperer rosette:
+        //   net inward acceleration on each body = (G * m / R²) * C(N)
+        // where C(N) = (1/4) * Σ_{k=1}^{N-1} 1 / sin(π k / N)
+        // (derived from vector sum of gravitational components; works for any N ≥ 2)
+        var sum: Float = 0.0
+        let piOverN = Float.pi / Float(N)
+        for k in 1..<N {
+            sum += 1.0 / sin(Float(k) * piOverN)
+        }
+        let C = sum / 4.0
+        
+        // Correct equilibrium orbital speed for the rosette (no central mass needed).
+        // From force balance: v² / R = G * m * C / R²  ⇒  v = sqrt(G * m * C / R)
+        // This is exact for equal-mass circular orbits around the common center of mass.
+        let velocityMagnitude = sqrt(G * rosetteMass * C / rosetteRadius)
+        
+        for i in 0..<N {
+            let angle = Float(i) * 2.0 * Float.pi / Float(N)
             let position = center + SIMD2<Float>(cos(angle), sin(angle)) * rosetteRadius
-
-            // Calculate orbital velocity for a circular orbit
-            // Assume we're orbiting the central mass (if any)
-            // For now, use a perpendicular velocity based on Keplerian mechanics
-            let velocityMagnitude = sqrt(G * rosetteMass / rosetteRadius)  // assuming central mass of 40
+            
+            // Tangential (perpendicular) velocity for counterclockwise rigid rotation
             let velocityDirection = SIMD2<Float>(-sin(angle), cos(angle))
             let velocity = velocityDirection * velocityMagnitude
-
+            
             let color = bodyColors[colorIndex % bodyColors.count]
             colorIndex += 1
-
+            
             let body = rosetteShape.makeBody(at: position, color: color)
             body.mass = rosetteMass
             body.velocity = velocity
-
+            
             simulation.addBody(body)
         }
-
+        
         updateHUD()
     }
 
