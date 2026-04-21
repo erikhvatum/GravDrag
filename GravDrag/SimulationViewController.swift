@@ -73,6 +73,7 @@ final class SimulationViewController: NSViewController {
     private var groupDragPreVelocities: [SIMD2<Float>] = []  // velocities before drag started
     private var dragStartWorld: SIMD2<Float> = .zero
     private var lastDragWorld: SIMD2<Float>  = .zero
+    private var isVKeyPressed: Bool = false  // tracks V key state for velocity drag mode
 
     // Panning state (middle mouse button)
     private var isPanning: Bool = false
@@ -704,10 +705,17 @@ final class SimulationViewController: NSViewController {
             if isDragging && !groupDragBodies.isEmpty {
                 for (i, b) in groupDragBodies.enumerated() {
                     b.position = world + groupDragOffsets[i]
+
+                    // If V key is held, preview the velocity that will be applied
+                    if isVKeyPressed {
+                        let dragVector = world - dragStartWorld
+                        let velocityScale: Float = 4.2
+                        b.velocity = dragVector * velocityScale
+                    }
                 }
                 simulation.rebuildGPUState()
                 lastDragWorld = world
-                // Update table to show new positions during drag
+                // Update table to show new positions and velocities during drag
                 updateTable()
             } else if selectionStart != nil {
                 updateSelectionOverlay(to: world)
@@ -720,18 +728,9 @@ final class SimulationViewController: NSViewController {
 
         if toolMode == .select {
             if isDragging {
-                // Check if V key is currently held down (key code 9 for 'v')
-                let vKeyHeld = NSEvent.modifierFlags.contains(.init(rawValue: 1 << 9)) ||
-                               CGEventSource.keyState(.combinedSessionState, key: 9)
-
-                if vKeyHeld {
+                if isVKeyPressed {
                     // V-click drag mode: apply velocity based on drag vector
                     let dragVector = world - dragStartWorld
-
-                    // Scale factor calibrated so that at default zoom (600) and 25% speed,
-                    // a reasonable drag puts object in orbit around central mass
-                    // Target: ~795 velocity units for stable orbit at r=380
-                    // With camera.scale=600, a ~190 pixel drag (in world units) should give ~795 velocity
                     let velocityScale: Float = 4.2  // calibrated for practical orbital insertion
                     let newVelocity = dragVector * velocityScale
 
@@ -755,6 +754,8 @@ final class SimulationViewController: NSViewController {
                 groupDragBodies  = []
                 groupDragOffsets = []
                 groupDragPreVelocities = []
+                // Update table after drag completes to show final state
+                updateTable()
             } else if selectionStart != nil {
                 finaliseSelection(at: world)
                 selectionStart = nil
@@ -843,8 +844,30 @@ final class SimulationViewController: NSViewController {
             resetSimulation()
         case 17:                                    // T
             toggleTable()
+        case 9:                                     // V
+            // Track V key for velocity drag mode (prevents system beep)
+            isVKeyPressed = true
         default:
             super.keyDown(with: event)
+        }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        switch event.keyCode {
+        case 9:                                     // V
+            isVKeyPressed = false
+            // If we were dragging and V is released, restore pre-drag velocities
+            if isDragging && !groupDragBodies.isEmpty {
+                for (i, b) in groupDragBodies.enumerated() {
+                    if i < groupDragPreVelocities.count {
+                        b.velocity = groupDragPreVelocities[i]
+                    }
+                }
+                simulation.rebuildGPUState()
+                updateTable()
+            }
+        default:
+            super.keyUp(with: event)
         }
     }
 
