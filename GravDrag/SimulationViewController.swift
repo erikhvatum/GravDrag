@@ -925,71 +925,48 @@ final class SimulationViewController: NSViewController {
         alert.messageText = "Keplerian Rosette Configuration"
         alert.informativeText = "Configure the rosette parameters"
 
-        // Create a view to hold the input fields
-        let stackView = NSStackView()
-        stackView.orientation = .vertical
-        stackView.spacing = 8
-        stackView.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
-
-        // Count field
+        // Create the labels and fields
         let countLabel = NSTextField(labelWithString: "Number of bodies:")
-        countLabel.alignment = .right
-        countLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
-
         let countField = NSTextField(string: "\(rosetteCount)")
         countField.placeholderString = "6"
-        countField.widthAnchor.constraint(equalToConstant: 80).isActive = true
 
-        let countStack = NSStackView(views: [countLabel, countField])
-        countStack.spacing = 8
-        countStack.alignment = .centerY
-
-        // Mass field
         let massLabel = NSTextField(labelWithString: "Mass per body:")
-        massLabel.alignment = .right
-        massLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
-
         let massField = NSTextField(string: "\(rosetteMass)")
         massField.placeholderString = "1.0"
-        massField.widthAnchor.constraint(equalToConstant: 80).isActive = true
 
-        let massStack = NSStackView(views: [massLabel, massField])
-        massStack.spacing = 8
-        massStack.alignment = .centerY
-
-        // Radius field
         let radiusLabel = NSTextField(labelWithString: "Rosette radius:")
-        radiusLabel.alignment = .right
-        radiusLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
-
         let radiusField = NSTextField(string: "\(rosetteRadius)")
         radiusField.placeholderString = "300"
-        radiusField.widthAnchor.constraint(equalToConstant: 80).isActive = true
 
-        let radiusStack = NSStackView(views: [radiusLabel, radiusField])
-        radiusStack.spacing = 8
-        radiusStack.alignment = .centerY
-
-        // Shape popup
         let shapeLabel = NSTextField(labelWithString: "Body shape:")
-        shapeLabel.alignment = .right
-        shapeLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
-
         let shapePopup = NSPopUpButton()
         shapePopup.addItems(withTitles: ["Circle", "Rectangle", "Triangle"])
         shapePopup.selectItem(at: 0)
-        shapePopup.widthAnchor.constraint(equalToConstant: 120).isActive = true
 
-        let shapeStack = NSStackView(views: [shapeLabel, shapePopup])
-        shapeStack.spacing = 8
-        shapeStack.alignment = .centerY
+        // Wrap them in an NSGridView for perfect 2-column alignment
+        let gridView = NSGridView(views: [
+            [countLabel, countField],
+            [massLabel, massField],
+            [radiusLabel, radiusField],
+            [shapeLabel, shapePopup]
+        ])
+        
+        gridView.rowSpacing = 8
+        gridView.columnSpacing = 10
+        
+        // Align labels to the right, and let inputs fill the remaining space
+        gridView.column(at: 0).xPlacement = .trailing
+        gridView.column(at: 1).xPlacement = .fill
+        gridView.rowAlignment = .firstBaseline
+        
+        // FIX 1: Explicitly set the input column width natively
+        gridView.column(at: 1).width = 80
+        
+        // FIX 2: Let the grid calculate its physical frame size,
+        // removing the need for translatesAutoresizingMaskIntoConstraints = false
+        gridView.setFrameSize(gridView.fittingSize)
 
-        stackView.addArrangedSubview(countStack)
-        stackView.addArrangedSubview(massStack)
-        stackView.addArrangedSubview(radiusStack)
-        stackView.addArrangedSubview(shapeStack)
-
-        alert.accessoryView = stackView
+        alert.accessoryView = gridView
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
 
@@ -1034,7 +1011,7 @@ final class SimulationViewController: NSViewController {
             // Calculate orbital velocity for a circular orbit
             // Assume we're orbiting the central mass (if any)
             // For now, use a perpendicular velocity based on Keplerian mechanics
-            let velocityMagnitude = sqrt(G * 40.0 * rosetteMass / rosetteRadius)  // assuming central mass of 40
+            let velocityMagnitude = sqrt(G * rosetteMass / rosetteRadius)  // assuming central mass of 40
             let velocityDirection = SIMD2<Float>(-sin(angle), cos(angle))
             let velocity = velocityDirection * velocityMagnitude
 
