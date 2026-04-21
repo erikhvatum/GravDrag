@@ -92,6 +92,12 @@ final class GravitySimulation {
         onUpdate?()
     }
 
+    func removeAllBodies() {
+        bodies.removeAll()
+        rebuildVertexBuffer()
+        onUpdate?()
+    }
+
     func selectAll() {
         bodies.forEach { $0.isSelected = true }
     }

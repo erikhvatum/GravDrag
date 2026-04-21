@@ -574,8 +574,7 @@ final class SimulationViewController: NSViewController {
     @objc private func clearAllBodies() {
         // Remove all bodies from the simulation
         simulation.bodies.forEach { renderer.evictIndexBuffer(for: $0.id) }
-        simulation.bodies.removeAll()
-        simulation.rebuildGPUState()
+        simulation.removeAllBodies()
         updateHUD()
         updateTable()
     }
