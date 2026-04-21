@@ -7,6 +7,7 @@ enum ToolMode {
     case add        // click to add a body
     case select     // click / drag to select
     case delete     // click to delete
+    case rosette    // click to place a Keplerian rosette
 }
 
 // MARK: - Selection tool sub-type
@@ -29,9 +30,11 @@ final class SimulationViewController: NSViewController {
     private var toolbar:         NSView!
     private var playPauseButton: NSButton!
     private var resetButton:     NSButton!
+    private var clearButton:     NSButton!
     private var addButton:       NSButton!
     private var selectButton:    NSButton!
     private var deleteButton:    NSButton!
+    private var rosetteButton:   NSButton!
     private var rectSelButton:   NSButton!
     private var lassoSelButton:  NSButton!
     private var shapePopup:      NSPopUpButton!
@@ -86,6 +89,12 @@ final class SimulationViewController: NSViewController {
 
     // Shape editor
     private var shapeEditorVC: ShapeEditorViewController?
+
+    // Rosette configuration
+    private var rosetteCount: Int = 6
+    private var rosetteMass: Float = 1.0
+    private var rosetteRadius: Float = 300.0
+    private var rosetteShape: ShapeTemplate = .circle(radius: 20)
 
     // Physics timer drives simulation steps at fixed rate
     private var physicsTimer: Timer?
@@ -223,10 +232,14 @@ final class SimulationViewController: NSViewController {
         // Reset scene
         resetButton = makeToolButton("⟳", tip: "Reset Scene (R)", action: #selector(resetSimulation))
 
+        // Clear all
+        clearButton = makeToolButton("🗑", tip: "Clear all bodies", action: #selector(clearAllBodies))
+
         // Tool group
         addButton    = makeToolButton("＋", tip: "Add body (A)",     action: #selector(selectAddTool))
         selectButton = makeToolButton("↖",  tip: "Select / Drag (S)", action: #selector(selectSelectTool))
         deleteButton = makeToolButton("✕",  tip: "Delete body (D)",  action: #selector(selectDeleteTool))
+        rosetteButton = makeToolButton("⭘", tip: "Keplerian Rosette", action: #selector(selectRosetteTool))
 
         // Selection sub-tools (only meaningful in select mode)
         rectSelButton  = makeToolButton("▭", tip: "Rectangle select", action: #selector(useRectSelect))
@@ -308,8 +321,9 @@ final class SimulationViewController: NSViewController {
 
         for v: NSView in [playPauseButton,
                           resetButton,
+                          clearButton,
                           sep(),
-                          addButton, selectButton, deleteButton,
+                          addButton, selectButton, deleteButton, rosetteButton,
                           sep(),
                           rectSelButton, lassoSelButton,
                           sep(),
@@ -502,6 +516,7 @@ final class SimulationViewController: NSViewController {
         addButton.state    = toolMode == .add    ? .on : .off
         selectButton.state = toolMode == .select ? .on : .off
         deleteButton.state = toolMode == .delete ? .on : .off
+        rosetteButton.state = toolMode == .rosette ? .on : .off
         rectSelButton.state  = selectionKind == .rectangle ? .on : .off
         lassoSelButton.state = selectionKind == .lasso     ? .on : .off
         let inSel = toolMode == .select
@@ -551,6 +566,19 @@ final class SimulationViewController: NSViewController {
     @objc private func selectAddTool()    { toolMode = .add;    simulation.deselectAll(); updateToolButtons() }
     @objc private func selectSelectTool() { toolMode = .select; updateToolButtons() }
     @objc private func selectDeleteTool() { toolMode = .delete; simulation.deselectAll(); updateToolButtons() }
+
+    @objc private func selectRosetteTool() {
+        showRosetteConfigDialog()
+    }
+
+    @objc private func clearAllBodies() {
+        // Remove all bodies from the simulation
+        simulation.bodies.forEach { renderer.evictIndexBuffer(for: $0.id) }
+        simulation.bodies.removeAll()
+        simulation.rebuildGPUState()
+        updateHUD()
+        updateTable()
+    }
 
     @objc private func useRectSelect()  { selectionKind = .rectangle; updateToolButtons() }
     @objc private func useLassoSelect() { selectionKind = .lasso;     updateToolButtons() }
@@ -668,6 +696,9 @@ final class SimulationViewController: NSViewController {
                 simulation.removeBody(b)
             }
             updateHUD()
+
+        case .rosette:
+            addRosetteAt(world)
 
         case .select:
             if let b = simulation.body(at: world) {
@@ -885,6 +916,115 @@ final class SimulationViewController: NSViewController {
         colorIndex += 1
         let body = simulation.currentTemplate.makeBody(at: position, color: color)
         simulation.addBody(body)
+        updateHUD()
+    }
+
+    // MARK: - Rosette configuration and placement
+
+    private func showRosetteConfigDialog() {
+        let alert = NSAlert()
+        alert.messageText = "Keplerian Rosette Configuration"
+        alert.informativeText = "Configure the rosette parameters"
+
+        // Create a view to hold the input fields
+        let stackView = NSStackView()
+        stackView.orientation = .vertical
+        stackView.spacing = 8
+        stackView.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+
+        // Count field
+        let countLabel = NSTextField(labelWithString: "Number of bodies:")
+        let countField = NSTextField(string: "\(rosetteCount)")
+        countField.placeholderString = "6"
+        let countStack = NSStackView(views: [countLabel, countField])
+        countStack.spacing = 8
+
+        // Mass field
+        let massLabel = NSTextField(labelWithString: "Mass per body:")
+        let massField = NSTextField(string: "\(rosetteMass)")
+        massField.placeholderString = "1.0"
+        let massStack = NSStackView(views: [massLabel, massField])
+        massStack.spacing = 8
+
+        // Radius field
+        let radiusLabel = NSTextField(labelWithString: "Rosette radius:")
+        let radiusField = NSTextField(string: "\(rosetteRadius)")
+        radiusField.placeholderString = "300"
+        let radiusStack = NSStackView(views: [radiusLabel, radiusField])
+        radiusStack.spacing = 8
+
+        // Shape popup
+        let shapeLabel = NSTextField(labelWithString: "Body shape:")
+        let shapePopup = NSPopUpButton()
+        shapePopup.addItems(withTitles: ["Circle", "Rectangle", "Triangle"])
+        shapePopup.selectItem(at: 0)
+        let shapeStack = NSStackView(views: [shapeLabel, shapePopup])
+        shapeStack.spacing = 8
+
+        stackView.addArrangedSubview(countStack)
+        stackView.addArrangedSubview(massStack)
+        stackView.addArrangedSubview(radiusStack)
+        stackView.addArrangedSubview(shapeStack)
+
+        alert.accessoryView = stackView
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // Parse values
+            if let count = Int(countField.stringValue), count > 0 {
+                rosetteCount = count
+            }
+            if let mass = Float(massField.stringValue), mass > 0 {
+                rosetteMass = mass
+            }
+            if let radius = Float(radiusField.stringValue), radius > 0 {
+                rosetteRadius = radius
+            }
+
+            // Set shape
+            switch shapePopup.indexOfSelectedItem {
+            case 0: rosetteShape = .circle(radius: 20)
+            case 1: rosetteShape = .rectangle(width: 40, height: 30)
+            case 2: rosetteShape = .triangle(radius: 25)
+            default: rosetteShape = .circle(radius: 20)
+            }
+
+            // Enter rosette mode
+            toolMode = .rosette
+            simulation.deselectAll()
+            updateToolButtons()
+        }
+    }
+
+    private func addRosetteAt(_ center: SIMD2<Float>) {
+        // Calculate central mass needed for Keplerian orbits
+        // For circular orbit: v^2 = G * M / r
+        // We'll use the gravitational constant from the simulation
+        let G: Float = 800.0  // matches kGravitationalConstant in GravitySimulation
+
+        for i in 0..<rosetteCount {
+            let angle = Float(i) * 2.0 * Float.pi / Float(rosetteCount)
+            let position = center + SIMD2<Float>(cos(angle), sin(angle)) * rosetteRadius
+
+            // Calculate orbital velocity for a circular orbit
+            // Assume we're orbiting the central mass (if any)
+            // For now, use a perpendicular velocity based on Keplerian mechanics
+            let velocityMagnitude = sqrt(G * 40.0 * rosetteMass / rosetteRadius)  // assuming central mass of 40
+            let velocityDirection = SIMD2<Float>(-sin(angle), cos(angle))
+            let velocity = velocityDirection * velocityMagnitude
+
+            let color = bodyColors[colorIndex % bodyColors.count]
+            colorIndex += 1
+
+            let body = rosetteShape.makeBody(at: position, color: color)
+            body.mass = rosetteMass
+            body.velocity = velocity
+
+            simulation.addBody(body)
+        }
+
         updateHUD()
     }
 

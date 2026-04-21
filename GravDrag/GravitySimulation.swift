@@ -258,6 +258,7 @@ final class GravitySimulation {
             segments: 48
         )
         central.mass *= 40
+        central.isFocused = true  // Focus on central object by default
         addBody(central)
 
         // Lighter orbiting triangle (blue-cyan)
