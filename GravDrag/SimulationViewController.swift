@@ -70,8 +70,14 @@ final class SimulationViewController: NSViewController {
     private var isDragging:    Bool          = false
     private var groupDragBodies:  [Body]     = []
     private var groupDragOffsets: [SIMD2<Float>] = []
+    private var dragStartWorld: SIMD2<Float> = .zero
     private var lastDragWorld: SIMD2<Float>  = .zero
     private var dragVelocityBuffer: SIMD2<Float> = .zero
+
+    // Panning state (middle mouse button)
+    private var isPanning: Bool = false
+    private var panStartWorld: SIMD2<Float> = .zero
+    private var panStartCamera: SIMD2<Float> = .zero
 
     // Selection drawing
     private var selectionStart:  SIMD2<Float>? = nil
@@ -246,7 +252,7 @@ final class SimulationViewController: NSViewController {
         spinStepper.valueWraps = false
         spinStepper.target     = self
         spinStepper.action     = #selector(spinStepperChanged(_:))
-        spinStepper.toolTip    = "Spin selected body (also: scroll wheel)"
+        spinStepper.toolTip    = "Spin selected body"
 
         // Inspector table toggle
         tableButton = makeToolButton("≡", tip: "Toggle data table (T)", action: #selector(toggleTable))
@@ -673,6 +679,7 @@ final class SimulationViewController: NSViewController {
                 groupDragBodies.forEach { $0.isStatic = true }
                 simulation.rebuildGPUState()
                 isDragging     = true
+                dragStartWorld = world
                 lastDragWorld  = world
                 dragVelocityBuffer = .zero
             } else {
@@ -694,8 +701,6 @@ final class SimulationViewController: NSViewController {
 
         if toolMode == .select {
             if isDragging && !groupDragBodies.isEmpty {
-                let delta = world - lastDragWorld
-                dragVelocityBuffer = delta * Float(physicsHz)   // estimate velocity for throw
                 for (i, b) in groupDragBodies.enumerated() {
                     b.position = world + groupDragOffsets[i]
                 }
@@ -714,10 +719,29 @@ final class SimulationViewController: NSViewController {
 
         if toolMode == .select {
             if isDragging {
-                // Restore physics for dragged bodies; give them throw velocity
-                groupDragBodies.forEach { b in
-                    b.isStatic = false
-                    b.velocity = dragVelocityBuffer
+                // Apply velocity based on simulation state
+                if simulation.isPaused {
+                    // In paused mode: just restore physics, don't change velocity
+                    groupDragBodies.forEach { b in
+                        b.isStatic = false
+                    }
+                } else {
+                    // In normal mode: apply velocity based on drag distance
+                    // Calculate velocity from drag start to drag end
+                    let dragVector = world - dragStartWorld
+                    let dragDistance = simd_length(dragVector)
+
+                    // Scale factor calibrated so that at default zoom (600) and 25% speed,
+                    // a reasonable drag puts object in orbit around central mass
+                    // Target: ~795 velocity units for stable orbit at r=380
+                    // With camera.scale=600, a ~190 pixel drag (in world units) should give ~795 velocity
+                    let velocityScale: Float = 4.2  // calibrated for practical orbital insertion
+                    let newVelocity = dragVector * velocityScale
+
+                    groupDragBodies.forEach { b in
+                        b.isStatic = false
+                        b.velocity = newVelocity
+                    }
                 }
                 simulation.rebuildGPUState()
                 isDragging       = false
@@ -751,12 +775,8 @@ final class SimulationViewController: NSViewController {
             simulation.rebuildGPUState()
             updateHUD()
             updateTable()
-        } else {
-            // Pan camera (world units per scroll tick proportional to zoom level)
-            let pan: Float = camera.scale * 0.003
-            camera.center.x -= Float(event.deltaX) * pan
-            camera.center.y -= Float(event.deltaY) * pan
         }
+        // Scroll wheel panning removed - use middle mouse button instead
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -767,6 +787,32 @@ final class SimulationViewController: NSViewController {
             updateHUD()
             // Sync table selection (removal might affect indices, but likely no change)
             updateTableSelection()
+        }
+    }
+
+    // MARK: - Middle mouse button panning
+
+    override func otherMouseDown(with event: NSEvent) {
+        // Middle mouse button (button number 2) starts panning
+        if event.buttonNumber == 2 {
+            isPanning = true
+            panStartWorld = worldPoint(from: event)
+            panStartCamera = camera.center
+        }
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        if isPanning {
+            let currentWorld = worldPoint(from: event)
+            // Pan camera by the difference in world coordinates
+            let delta = panStartWorld - currentWorld
+            camera.center = panStartCamera + delta
+        }
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        if event.buttonNumber == 2 {
+            isPanning = false
         }
     }
 

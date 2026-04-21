@@ -29,6 +29,15 @@ final class SimulationRootView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         controller?.rightMouseDown(with: event)
     }
+    override func otherMouseDown(with event: NSEvent) {
+        controller?.otherMouseDown(with: event)
+    }
+    override func otherMouseDragged(with event: NSEvent) {
+        controller?.otherMouseDragged(with: event)
+    }
+    override func otherMouseUp(with event: NSEvent) {
+        controller?.otherMouseUp(with: event)
+    }
     override func scrollWheel(with event: NSEvent) {
         controller?.scrollWheel(with: event)
     }
