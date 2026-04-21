@@ -933,32 +933,56 @@ final class SimulationViewController: NSViewController {
 
         // Count field
         let countLabel = NSTextField(labelWithString: "Number of bodies:")
+        countLabel.alignment = .right
+        countLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
+
         let countField = NSTextField(string: "\(rosetteCount)")
         countField.placeholderString = "6"
+        countField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+
         let countStack = NSStackView(views: [countLabel, countField])
         countStack.spacing = 8
+        countStack.alignment = .centerY
 
         // Mass field
         let massLabel = NSTextField(labelWithString: "Mass per body:")
+        massLabel.alignment = .right
+        massLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
+
         let massField = NSTextField(string: "\(rosetteMass)")
         massField.placeholderString = "1.0"
+        massField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+
         let massStack = NSStackView(views: [massLabel, massField])
         massStack.spacing = 8
+        massStack.alignment = .centerY
 
         // Radius field
         let radiusLabel = NSTextField(labelWithString: "Rosette radius:")
+        radiusLabel.alignment = .right
+        radiusLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
+
         let radiusField = NSTextField(string: "\(rosetteRadius)")
         radiusField.placeholderString = "300"
+        radiusField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+
         let radiusStack = NSStackView(views: [radiusLabel, radiusField])
         radiusStack.spacing = 8
+        radiusStack.alignment = .centerY
 
         // Shape popup
         let shapeLabel = NSTextField(labelWithString: "Body shape:")
+        shapeLabel.alignment = .right
+        shapeLabel.widthAnchor.constraint(equalToConstant: 120).isActive = true
+
         let shapePopup = NSPopUpButton()
         shapePopup.addItems(withTitles: ["Circle", "Rectangle", "Triangle"])
         shapePopup.selectItem(at: 0)
+        shapePopup.widthAnchor.constraint(equalToConstant: 120).isActive = true
+
         let shapeStack = NSStackView(views: [shapeLabel, shapePopup])
         shapeStack.spacing = 8
+        shapeStack.alignment = .centerY
 
         stackView.addArrangedSubview(countStack)
         stackView.addArrangedSubview(massStack)
