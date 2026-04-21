@@ -96,19 +96,16 @@ kernel void physicsStep(
     uint id [[ thread_position_in_grid ]])
 {
     if (id >= params.bodyCount) return;
-
     Body self = inputBodies[id];
     if (self.isStatic) {
         outputBodies[id] = self;
         return;
     }
 
-    // Compute bounding radius for collision detection
     float selfRadius = computeBoundingRadius(vertices, self.vertexOffset, self.vertexCount);
 
+    // --- First acceleration at current position ---
     float2 force = float2(0.0f, 0.0f);
-
-    // Gravity calculation
     for (uint i = 0; i < params.bodyCount; i++) {
         if (i == id) continue;
         Body other = inputBodies[i];
@@ -116,17 +113,38 @@ kernel void physicsStep(
         float distSq = dot(diff, diff) + params.softening * params.softening;
         float invDist = rsqrt(distSq);
         float forceMag = params.G * self.mass * other.mass * invDist * invDist;
-        force += forceMag * diff * invDist; // normalize diff inline
+        force += forceMag * (diff * invDist);
     }
-
-    // Semi-implicit Euler
     float2 accel = force / self.mass;
-    Body out = self;
-    out.velocity += accel * params.dt;
-    out.position += out.velocity * params.dt;
-    out.angle    += out.angularVel * params.dt;
 
-    // Collision detection and response
+    // --- Velocity Verlet (leapfrog) integration ---
+    Body out = self;
+
+    // Half-kick velocity
+    out.velocity += accel * (0.5f * params.dt);
+
+    // Full position drift
+    out.position += out.velocity * params.dt;
+
+    // Recompute acceleration at *new* position
+    force = float2(0.0f, 0.0f);
+    for (uint i = 0; i < params.bodyCount; i++) {
+        if (i == id) continue;
+        Body other = inputBodies[i];
+        float2 diff = other.position - out.position;   // note: new self position
+        float distSq = dot(diff, diff) + params.softening * params.softening;
+        float invDist = rsqrt(distSq);
+        float forceMag = params.G * self.mass * other.mass * invDist * invDist;
+        force += forceMag * (diff * invDist);
+    }
+    accel = force / self.mass;
+
+    // Second half-kick velocity
+    out.velocity += accel * (0.5f * params.dt);
+
+    out.angle += out.angularVel * params.dt;
+
+    // Collision resolution (still optional—consider disabling for rosettes)
     for (uint i = 0; i < params.bodyCount; i++) {
         if (i == id) continue;
         Body other = inputBodies[i];

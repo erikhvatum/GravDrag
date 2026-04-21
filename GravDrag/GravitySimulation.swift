@@ -5,7 +5,7 @@ import simd
 // MARK: - Simulation parameters
 
 private let kGravitationalConstant: Float = 800.0   // tuned so that v≈795 at r=380 gives stable ~3 s circular orbit with chosen masses
-private let kSoftening:             Float = 20.0
+private let kSoftening:             Float = 0.0
 private let kMaxBodies:             Int   = 512
 private let kMaxVerticesPerBody:    Int   = 64
 private let kMaxTotalVertices:      Int   = kMaxBodies * kMaxVerticesPerBody
