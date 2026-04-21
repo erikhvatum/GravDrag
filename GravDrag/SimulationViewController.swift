@@ -70,9 +70,10 @@ final class SimulationViewController: NSViewController {
     private var isDragging:    Bool          = false
     private var groupDragBodies:  [Body]     = []
     private var groupDragOffsets: [SIMD2<Float>] = []
+    private var groupDragPreVelocities: [SIMD2<Float>] = []  // velocities before drag started
     private var dragStartWorld: SIMD2<Float> = .zero
     private var lastDragWorld: SIMD2<Float>  = .zero
-    private var dragVelocityBuffer: SIMD2<Float> = .zero
+    private var isVKeyHeld: Bool = false  // tracks if V key is held during drag
 
     // Panning state (middle mouse button)
     private var isPanning: Bool = false
@@ -676,12 +677,13 @@ final class SimulationViewController: NSViewController {
                 // Mark dragged bodies as static so physics doesn't overwrite positions
                 groupDragBodies  = simulation.bodies.filter { $0.isSelected }
                 groupDragOffsets = groupDragBodies.map { $0.position - world }
+                // Save pre-drag velocities so we can restore them later
+                groupDragPreVelocities = groupDragBodies.map { $0.velocity }
                 groupDragBodies.forEach { $0.isStatic = true }
                 simulation.rebuildGPUState()
                 isDragging     = true
                 dragStartWorld = world
                 lastDragWorld  = world
-                dragVelocityBuffer = .zero
             } else {
                 // Start selection tool
                 simulation.deselectAll()
@@ -719,17 +721,13 @@ final class SimulationViewController: NSViewController {
 
         if toolMode == .select {
             if isDragging {
-                // Apply velocity based on simulation state
-                if simulation.isPaused {
-                    // In paused mode: just restore physics, don't change velocity
-                    groupDragBodies.forEach { b in
-                        b.isStatic = false
-                    }
-                } else {
-                    // In normal mode: apply velocity based on drag distance
-                    // Calculate velocity from drag start to drag end
+                // Check if V key is currently held down (key code 9 for 'v')
+                let vKeyHeld = NSEvent.modifierFlags.contains(.init(rawValue: 1 << 9)) ||
+                               CGEventSource.keyState(.combinedSessionState, key: 9)
+
+                if vKeyHeld {
+                    // V-click drag mode: apply velocity based on drag vector
                     let dragVector = world - dragStartWorld
-                    let dragDistance = simd_length(dragVector)
 
                     // Scale factor calibrated so that at default zoom (600) and 25% speed,
                     // a reasonable drag puts object in orbit around central mass
@@ -738,16 +736,26 @@ final class SimulationViewController: NSViewController {
                     let velocityScale: Float = 4.2  // calibrated for practical orbital insertion
                     let newVelocity = dragVector * velocityScale
 
-                    groupDragBodies.forEach { b in
+                    for (i, b) in groupDragBodies.enumerated() {
                         b.isStatic = false
                         b.velocity = newVelocity
                     }
+                } else {
+                    // Normal drag mode: restore pre-drag velocities
+                    for (i, b) in groupDragBodies.enumerated() {
+                        b.isStatic = false
+                        // Restore the velocity from before the drag started
+                        if i < groupDragPreVelocities.count {
+                            b.velocity = groupDragPreVelocities[i]
+                        }
+                    }
                 }
+
                 simulation.rebuildGPUState()
                 isDragging       = false
                 groupDragBodies  = []
                 groupDragOffsets = []
-                dragVelocityBuffer = .zero
+                groupDragPreVelocities = []
             } else if selectionStart != nil {
                 finaliseSelection(at: world)
                 selectionStart = nil
