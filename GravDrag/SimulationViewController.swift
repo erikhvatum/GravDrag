@@ -379,7 +379,6 @@ final class SimulationViewController: NSViewController {
         tableScrollView.hasVerticalScroller = true
         tableScrollView.hasHorizontalScroller = true
         tableScrollView.borderType = .bezelBorder
-        tableScrollView.translatesAutoresizingMaskIntoConstraints = false
 
         tableView = NSTableView()
         tableView.rowHeight = 22
