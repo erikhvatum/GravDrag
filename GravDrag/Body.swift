@@ -23,7 +23,8 @@ struct GPUBody {
     var isSelected:       Int32   // 1 = selected (used by renderer)
     var isFocused:        Int32   // 1 = focused (camera follows)
     var _padding:         Int32   // padding to maintain alignment
-    // Total: 76 bytes (4-byte aligned, cache-friendly)
+    var _padding2:        Float   // pad to 80 bytes to match Metal struct alignment
+    // Total: 80 bytes (alignment 8, cache-friendly)
 }
 
 // MARK: - Swift-side Body

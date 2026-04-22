@@ -23,7 +23,8 @@ struct Body {
     int    isSelected;      // 4
     int    isFocused;       // 4
     int    _padding;        // 4
-    // 72 bytes total
+    float  _padding2;       // 4 (explicit to keep 80-byte stride with 8-byte alignment)
+    // 80 bytes total (Metal rounds to 8-byte alignment)
 };
 
 struct SimParams {
