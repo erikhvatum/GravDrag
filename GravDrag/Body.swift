@@ -181,7 +181,8 @@ final class Body: Identifiable {
             isStatic:        isStatic  ? 1 : 0,
             isSelected:      isSelected ? 1 : 0,
             isFocused:       isFocused ? 1 : 0,
-            _padding:        0
+            _padding:        0,
+            _padding2:       0
         )
     }
 }
