@@ -137,6 +137,7 @@ final class SimulationViewController: NSViewController {
 
         // Set up Metal view (auto-layout handled after toolbar)
         metalView = GravMetalView(frame: .zero, device: device)
+        metalView.translatesAutoresizingMaskIntoConstraints = true  // Managed by NSSplitView
         metalView.preferredFramesPerSecond = 60
         metalView.clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.1, alpha: 1)
 
@@ -375,6 +376,7 @@ final class SimulationViewController: NSViewController {
 
     private func buildInspectorTable() {
         tableScrollView = NSScrollView()
+        tableScrollView.translatesAutoresizingMaskIntoConstraints = true  // Managed by NSSplitView
         tableScrollView.hasVerticalScroller = true
         tableScrollView.hasHorizontalScroller = true
         tableScrollView.borderType = .bezelBorder
