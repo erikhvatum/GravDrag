@@ -354,11 +354,6 @@ final class SimulationViewController: NSViewController {
             stack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-
-            toolbar.topAnchor.constraint(equalTo: view.topAnchor),
-            toolbar.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: 40),
         ])
     }
 
@@ -1141,7 +1136,7 @@ final class SimulationViewController: NSViewController {
         if includeCentral {
             let compact = Body.makeCircle(
                 position: center,
-                radius: max(24.0, radius * 0.08),
+                radius: 1.0,
                 color: SIMD4<Float>(1.0, 0.9, 0.6, 1.0),
                 segments: 48
             )
@@ -1166,9 +1161,10 @@ final class SimulationViewController: NSViewController {
             let color = bodyColors[colorIndex % bodyColors.count]
             colorIndex += 1
 
-            let bodyRadius = max(4.0, min(18.0, sqrt(averageOrbitMass)))
+            let mass = averageOrbitMass
+            let bodyRadius = max(4.0, min(18.0, sqrt(mass)))
             let body = Body.makeCircle(position: position, radius: bodyRadius, color: color)
-            body.mass = averageOrbitMass
+            body.mass = mass
             body.momentOfInertia = Body.polygonMomentOfInertia(body.localVertices, mass: body.mass)
             body.velocity = velocity
 
