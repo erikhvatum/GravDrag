@@ -185,10 +185,15 @@ kernel void verletPass2(
             float correctionMag = penetration / invMassSum;
             self.position -= normal * (correctionMag * invMassSelf);
 
-            // Relative velocity along the collision normal
+            // Relative velocity along the collision normal (self - other)
             float2 relativeVel = self.velocity - other.velocity;
             float velAlongNormal = dot(relativeVel, normal);
-            if (velAlongNormal < 0.0f) {
+
+            // Only apply impulse if objects are approaching
+            // velAlongNormal > 0 means self is moving toward other (approaching)
+            // velAlongNormal < 0 means self is moving away from other (separating)
+            if (velAlongNormal > 0.0f) {
+                // Calculate impulse magnitude for elastic collision
                 float j = -(1.0f + restitution) * velAlongNormal / invMassSum;
                 float2 impulse = j * normal;
                 self.velocity += impulse * invMassSelf;
