@@ -200,6 +200,7 @@ final class GravitySimulation {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.downloadBodies(from: writeIdx)
+                self.resolveCollisionsCPU()
                 self.currentBufferIndex = writeIdx
                 self.uploadBodies(to: writeIdx)
                 self.onUpdate?()
@@ -256,6 +257,66 @@ final class GravitySimulation {
             body.velocity        = SIMD2<Float>(g.velX, g.velY)
             body.angle           = g.angle
             body.angularVelocity = g.angularVel
+        }
+    }
+
+    // MARK: - CPU collision resolution (elastic, momentum-preserving)
+
+    private func resolveCollisionsCPU() {
+        let count = bodies.count
+        guard count >= 2 else { return }
+
+        var radii = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            radii[i] = bodies[i].boundingRadius()
+        }
+
+        let restitution: Float = 1.0
+        let separationEpsilon: Float = 0.0001
+
+        for i in 0..<(count - 1) {
+            let a = bodies[i]
+            let invMassA = a.isStatic ? 0.0 : 1.0 / a.mass
+
+            for j in (i + 1)..<count {
+                let b = bodies[j]
+                let invMassB = b.isStatic ? 0.0 : 1.0 / b.mass
+                let invMassSum = invMassA + invMassB
+                if invMassSum == 0 { continue }  // both static
+
+                let delta = b.position - a.position
+                let distSq = simd_length_squared(delta)
+                let minDist = radii[i] + radii[j]
+                if distSq >= minDist * minDist { continue }
+
+                let dist = max(sqrt(distSq), separationEpsilon)
+                let normal = delta / dist
+                let penetration = minDist - dist
+
+                // Positional correction splits overlap based on inverse mass.
+                let correctionMag = penetration / invMassSum
+                if invMassA > 0 {
+                    a.position -= normal * correctionMag * invMassA
+                }
+                if invMassB > 0 {
+                    b.position += normal * correctionMag * invMassB
+                }
+
+                // Relative velocity along the normal
+                let relativeVel = a.velocity - b.velocity
+                let velAlongNormal = simd_dot(relativeVel, normal)
+                if velAlongNormal >= 0 { continue }  // separating
+
+                // Elastic impulse (e = 1)
+                let j = -(1 + restitution) * velAlongNormal / invMassSum
+                let impulse = j * normal
+                if invMassA > 0 {
+                    a.velocity += impulse * invMassA
+                }
+                if invMassB > 0 {
+                    b.velocity -= impulse * invMassB
+                }
+            }
         }
     }
 

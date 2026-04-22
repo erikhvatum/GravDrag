@@ -148,15 +148,6 @@ kernel void verletPass2(
     // 2. Second half-kick: v(t + dt) = v(t + dt/2) + a(t + dt) * dt/2
     self.velocity += accel * (0.5f * params.dt);
 
-    // 3. Collisions
-    float selfRadius = computeBoundingRadius(vertices, self.vertexOffset, self.vertexCount);
-    for (uint i = 0; i < params.bodyCount; i++) {
-        if (i == id) continue;
-        Body other = intermediateBodies[i];
-        float otherRadius = computeBoundingRadius(vertices, other.vertexOffset, other.vertexCount);
-        resolveCircleCollision(self, other, selfRadius, otherRadius);
-    }
-
     outputBodies[id] = self;
 }
 
