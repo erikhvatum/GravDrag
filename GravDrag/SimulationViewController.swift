@@ -8,6 +8,7 @@ enum ToolMode {
     case select     // click / drag to select
     case delete     // click to delete
     case rosette    // click to place a Keplerian rosette
+    case galaxy     // click to place a swirling galaxy
 }
 
 // MARK: - Selection tool sub-type
@@ -35,6 +36,7 @@ final class SimulationViewController: NSViewController {
     private var selectButton:    NSButton!
     private var deleteButton:    NSButton!
     private var rosetteButton:   NSButton!
+    private var galaxyButton:    NSButton!
     private var rectSelButton:   NSButton!
     private var lassoSelButton:  NSButton!
     private var shapePopup:      NSPopUpButton!
@@ -95,6 +97,12 @@ final class SimulationViewController: NSViewController {
     private var rosetteMass: Float = 1.0
     private var rosetteRadius: Float = 300.0
     private var rosetteShape: ShapeTemplate = .circle(radius: 20)
+
+    // Galaxy configuration
+    private var galaxyCount: Int = 120
+    private var galaxyRadius: Float = 800.0
+    private var galaxyHasCentralMass: Bool = true
+    private let galaxyTargetPeriod: Float = 12.0
 
     // Physics timer drives simulation steps at fixed rate
     private var physicsTimer: Timer?
@@ -240,6 +248,7 @@ final class SimulationViewController: NSViewController {
         selectButton = makeToolButton("↖",  tip: "Select / Drag (S)", action: #selector(selectSelectTool))
         deleteButton = makeToolButton("✕",  tip: "Delete body (D)",  action: #selector(selectDeleteTool))
         rosetteButton = makeToolButton("⭘", tip: "Keplerian Rosette", action: #selector(selectRosetteTool))
+        galaxyButton  = makeToolButton("🌀", tip: "Galaxy Generator", action: #selector(selectGalaxyTool))
 
         // Selection sub-tools (only meaningful in select mode)
         rectSelButton  = makeToolButton("▭", tip: "Rectangle select", action: #selector(useRectSelect))
@@ -323,7 +332,7 @@ final class SimulationViewController: NSViewController {
                           resetButton,
                           clearButton,
                           sep(),
-                          addButton, selectButton, deleteButton, rosetteButton,
+                          addButton, selectButton, deleteButton, rosetteButton, galaxyButton,
                           sep(),
                           rectSelButton, lassoSelButton,
                           sep(),
@@ -517,6 +526,7 @@ final class SimulationViewController: NSViewController {
         selectButton.state = toolMode == .select ? .on : .off
         deleteButton.state = toolMode == .delete ? .on : .off
         rosetteButton.state = toolMode == .rosette ? .on : .off
+        galaxyButton.state  = toolMode == .galaxy ? .on : .off
         rectSelButton.state  = selectionKind == .rectangle ? .on : .off
         lassoSelButton.state = selectionKind == .lasso     ? .on : .off
         let inSel = toolMode == .select
@@ -569,6 +579,10 @@ final class SimulationViewController: NSViewController {
 
     @objc private func selectRosetteTool() {
         showRosetteConfigDialog()
+    }
+
+    @objc private func selectGalaxyTool() {
+        showGalaxyConfigDialog()
     }
 
     @objc private func clearAllBodies() {
@@ -698,6 +712,8 @@ final class SimulationViewController: NSViewController {
 
         case .rosette:
             addRosetteAt(world)
+        case .galaxy:
+            addGalaxyAt(world)
 
         case .select:
             if let b = simulation.body(at: world) {
@@ -1042,6 +1058,123 @@ final class SimulationViewController: NSViewController {
             simulation.addBody(body)
         }
         
+        updateHUD()
+    }
+
+    // MARK: - Galaxy configuration and placement
+
+    private func showGalaxyConfigDialog() {
+        let alert = NSAlert()
+        alert.messageText = "Galaxy Configuration"
+        alert.informativeText = "Configure the galaxy parameters"
+
+        let countLabel = NSTextField(labelWithString: "Orbiting bodies:")
+        let countField = NSTextField(string: "\(galaxyCount)")
+        countField.placeholderString = "120"
+
+        let radiusLabel = NSTextField(labelWithString: "Galaxy radius:")
+        let radiusField = NSTextField(string: "\(galaxyRadius)")
+        radiusField.placeholderString = "800"
+
+        let compactCheckbox = NSButton(checkboxWithTitle: "Add central compact object", target: nil, action: nil)
+        compactCheckbox.state = galaxyHasCentralMass ? .on : .off
+
+        let gridView = NSGridView(views: [
+            [countLabel, countField],
+            [radiusLabel, radiusField],
+            [compactCheckbox, NSView()]
+        ])
+
+        gridView.rowSpacing = 8
+        gridView.columnSpacing = 10
+        gridView.column(at: 0).xPlacement = .trailing
+        gridView.column(at: 1).xPlacement = .fill
+        gridView.rowAlignment = .firstBaseline
+        gridView.column(at: 1).width = 100
+        gridView.row(at: 2).mergeCells(in: NSRange(location: 0, length: 2))
+        gridView.setFrameSize(gridView.fittingSize)
+
+        alert.accessoryView = gridView
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            if let count = Int(countField.stringValue), count > 0 {
+                galaxyCount = count
+            }
+            if let radius = Float(radiusField.stringValue), radius > 0 {
+                galaxyRadius = radius
+            }
+            galaxyHasCentralMass = compactCheckbox.state == .on
+
+            toolMode = .galaxy
+            simulation.deselectAll()
+            updateToolButtons()
+        }
+    }
+
+    private func addGalaxyAt(_ center: SIMD2<Float>) {
+        let G: Float = 800.0
+        let maxBodies = 512
+        let available = maxBodies - simulation.bodies.count
+        guard available > 0 else { return }
+
+        let includeCentral = galaxyHasCentralMass && available > 0
+        let slotsForOrbiters = max(0, available - (includeCentral ? 1 : 0))
+        let orbitingCount = min(galaxyCount, slotsForOrbiters)
+
+        guard orbitingCount > 0 || includeCentral else { return }
+
+        let radius = max(40.0, galaxyRadius)
+        let period = max(4.0, min(20.0, galaxyTargetPeriod))
+
+        // Choose masses so that an object near the outer edge completes an orbit in roughly the target period.
+        let muTarget = (4 * Float.pi * Float.pi * pow(radius, 3)) / (period * period)
+        let totalMassTarget = max(200.0, muTarget / G)
+
+        let centralMass = includeCentral ? totalMassTarget * 0.65 : 0.0
+        let orbitMassBudget = max(0.0, totalMassTarget - centralMass)
+        let averageOrbitMass = orbitingCount > 0 ? max(0.5, orbitMassBudget / Float(orbitingCount)) : 0.0
+        let totalOrbitMass = averageOrbitMass * Float(orbitingCount)
+
+        if includeCentral {
+            let compact = Body.makeCircle(
+                position: center,
+                radius: max(24.0, radius * 0.08),
+                color: SIMD4<Float>(1.0, 0.9, 0.6, 1.0),
+                segments: 48
+            )
+            compact.mass = centralMass
+            compact.momentOfInertia = Body.polygonMomentOfInertia(compact.localVertices, mass: compact.mass)
+            simulation.addBody(compact)
+        }
+
+        for _ in 0..<orbitingCount {
+            // Radial distribution biased toward the center for a dense core; sqrt keeps more mass inside.
+            let radialFactor = sqrt(Float.random(in: 0.05...1.0))
+            let r = radius * radialFactor
+            let angle = Float.random(in: 0..<2 * Float.pi)
+            let position = center + SIMD2<Float>(cos(angle), sin(angle)) * r
+
+            // Assume the orbiting mass is roughly uniform with radius; add a central point mass if enabled.
+            let enclosedMass = centralMass + totalOrbitMass * (r / radius)
+            let velocityMagnitude = sqrt(max(0.0, (G * max(enclosedMass, 0.1)) / max(r, 8.0)))
+            var velocity = SIMD2<Float>(-sin(angle), cos(angle)) * velocityMagnitude
+            velocity *= 1 + Float.random(in: -0.06...0.06)  // small jitter to avoid perfect uniformity
+
+            let color = bodyColors[colorIndex % bodyColors.count]
+            colorIndex += 1
+
+            let bodyRadius = max(4.0, min(18.0, sqrt(averageOrbitMass)))
+            let body = Body.makeCircle(position: position, radius: bodyRadius, color: color)
+            body.mass = averageOrbitMass
+            body.momentOfInertia = Body.polygonMomentOfInertia(body.localVertices, mass: body.mass)
+            body.velocity = velocity
+
+            simulation.addBody(body)
+        }
+
         updateHUD()
     }
 
