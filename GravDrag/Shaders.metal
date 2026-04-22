@@ -131,6 +131,8 @@ kernel void verletPass2(
 {
     if (id >= params.bodyCount) return;
     
+    (void)vertices; // currently unused but kept for pipeline compatibility
+
     Body self = intermediateBodies[id];
     if (self.isStatic) {
         outputBodies[id] = self;
@@ -155,6 +157,44 @@ kernel void verletPass2(
 
     // 2. Second half-kick: v(t + dt) = v(t + dt/2) + a(t + dt) * dt/2
     self.velocity += accel * (0.5f * params.dt);
+
+    // 3. Collision resolution (elastic, sphere-based)
+    const float restitution = 1.0f;
+    const float separationEpsilon = 1e-4f;
+    const float invMassSelf = self.isStatic ? 0.0f : 1.0f / self.mass;
+
+    if (invMassSelf > 0.0f) {
+        for (uint i = 0; i < params.bodyCount; i++) {
+            if (i == id) continue;
+
+            Body other = intermediateBodies[i];
+            float invMassOther = other.isStatic ? 0.0f : 1.0f / other.mass;
+            float invMassSum = invMassSelf + invMassOther;
+            if (invMassSum == 0.0f) continue; // both static
+
+            float2 delta = other.position - self.position;
+            float distSq = dot(delta, delta);
+            float minDist = self.radius + other.radius;
+            if (distSq >= minDist * minDist) continue;
+
+            float dist = max(sqrt(distSq), separationEpsilon);
+            float2 normal = delta / dist;
+            float penetration = minDist - dist;
+
+            // Positional correction proportional to inverse mass
+            float correctionMag = penetration / invMassSum;
+            self.position -= normal * (correctionMag * invMassSelf);
+
+            // Relative velocity along the collision normal
+            float2 relativeVel = self.velocity - other.velocity;
+            float velAlongNormal = dot(relativeVel, normal);
+            if (velAlongNormal < 0.0f) {
+                float j = -(1.0f + restitution) * velAlongNormal / invMassSum;
+                float2 impulse = j * normal;
+                self.velocity += impulse * invMassSelf;
+            }
+        }
+    }
 
     outputBodies[id] = self;
 }
