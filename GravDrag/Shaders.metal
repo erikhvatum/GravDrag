@@ -8,6 +8,7 @@ using namespace metal;
 struct Body {
     float2 position;        // 8
     float2 velocity;        // 8
+    float  radius;          // 4
     float  angle;           // 4
     float  angularVel;      // 4
     float  mass;            // 4
@@ -100,8 +101,11 @@ kernel void verletPass1(
         if (i == id) continue;
         Body other = inputBodies[i];
         float2 diff = other.position - self.position;
-        float distSq = dot(diff, diff) + params.softening * params.softening;
-        float invDist = rsqrt(distSq);
+        float distSq = dot(diff, diff);
+        if (distSq < 1e-12f) continue; // overlapping centers; skip to avoid NaNs
+        float minDist = self.radius + other.radius;
+        float clampedDistSq = max(distSq, minDist * minDist + params.softening * params.softening);
+        float invDist = rsqrt(clampedDistSq);
         float forceMag = params.G * self.mass * other.mass * invDist * invDist;
         force += forceMag * (diff * invDist);
     }
@@ -138,8 +142,11 @@ kernel void verletPass2(
         if (i == id) continue;
         Body other = intermediateBodies[i]; // Reading updated positions
         float2 diff = other.position - self.position;
-        float distSq = dot(diff, diff) + params.softening * params.softening;
-        float invDist = rsqrt(distSq);
+        float distSq = dot(diff, diff);
+        if (distSq < 1e-12f) continue;
+        float minDist = self.radius + other.radius;
+        float clampedDistSq = max(distSq, minDist * minDist + params.softening * params.softening);
+        float invDist = rsqrt(clampedDistSq);
         float forceMag = params.G * self.mass * other.mass * invDist * invDist;
         force += forceMag * (diff * invDist);
     }

@@ -8,6 +8,7 @@ struct GPUBody {
     var posY:             Float   // world y
     var velX:             Float
     var velY:             Float
+    var radius:           Float   // bounding radius
     var angle:            Float   // radians
     var angularVel:       Float   // rad/s
     var mass:             Float
@@ -22,7 +23,7 @@ struct GPUBody {
     var isSelected:       Int32   // 1 = selected (used by renderer)
     var isFocused:        Int32   // 1 = focused (camera follows)
     var _padding:         Int32   // padding to maintain alignment
-    // Total: 72 bytes (4-byte aligned, cache-friendly)
+    // Total: 76 bytes (4-byte aligned, cache-friendly)
 }
 
 // MARK: - Swift-side Body
@@ -165,6 +166,7 @@ final class Body: Identifiable {
             posY:            position.y,
             velX:            velocity.x,
             velY:            velocity.y,
+            radius:          boundingRadius(),
             angle:           angle,
             angularVel:      angularVelocity,
             mass:            mass,
