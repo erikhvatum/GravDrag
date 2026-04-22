@@ -39,7 +39,9 @@ final class Body: Identifiable {
     var mass:            Float
     var momentOfInertia: Float
     /// Vertices in local (body) space, with centroid at origin.
-    var localVertices:   [SIMD2<Float>]
+    var localVertices:   [SIMD2<Float>] {
+        didSet { invalidateTriangleCache() }
+    }
     var color:           SIMD4<Float>
     var isStatic:        Bool
     var isSelected:      Bool = false
@@ -47,6 +49,10 @@ final class Body: Identifiable {
 
     // Cache for GPU upload
     var vertexOffset: Int = 0   // set by GravitySimulation when building vertex buffer
+    
+    deinit {
+        invalidateTriangleCache()
+    }
 
     init(
         position:      SIMD2<Float>,
