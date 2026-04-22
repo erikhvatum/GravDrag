@@ -224,7 +224,7 @@ final class GravitySimulation {
 
     // MARK: - Private helpers
 
-    private func rebuildVertexBuffer() {
+    func rebuildVertexBuffer() {
         var offset = 0
         let ptr = vertexBuffer.contents().bindMemory(to: SIMD2<Float>.self,
                                                      capacity: kMaxTotalVertices)

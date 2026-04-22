@@ -1463,11 +1463,10 @@ extension SimulationViewController: NSTextFieldDelegate {
             if currentRadius > 0 {
                 let scale = value / currentRadius
                 body.localVertices = body.localVertices.map { $0 * scale }
-                // Recalculate mass and moment of inertia
-                let area = Body.polygonArea(body.localVertices)
-                let density: Float = 1.0
-                body.mass = max(area * density, 0.5)
+                // Recalculate moment of inertia with existing mass (mass should not change with radius)
                 body.momentOfInertia = Body.polygonMomentOfInertia(body.localVertices, mass: body.mass)
+                // Rebuild vertex buffer so the visual appearance updates
+                simulation.rebuildVertexBuffer()
             }
         case "spin":
             body.angularVelocity = value
