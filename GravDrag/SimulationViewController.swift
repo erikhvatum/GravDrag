@@ -137,7 +137,6 @@ final class SimulationViewController: NSViewController {
 
         // Set up Metal view (auto-layout handled after toolbar)
         metalView = GravMetalView(frame: .zero, device: device)
-        metalView.translatesAutoresizingMaskIntoConstraints = false
         metalView.preferredFramesPerSecond = 60
         metalView.clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.1, alpha: 1)
 
