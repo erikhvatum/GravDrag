@@ -813,7 +813,7 @@ final class SimulationViewController: NSViewController {
         // Ctrl+scroll → zoom camera
         if event.modifierFlags.contains(.control) {
             let factor = 1.0 + Float(event.deltaY) * 0.05
-            camera.scale = max(10, min(camera.scale * factor, 5000))
+            camera.scale = max(5, min(camera.scale * factor, 50000))
             return
         }
         // Scroll on selected bodies → change their spin
