@@ -218,41 +218,51 @@ func earClipTriangulate(_ polygon: [SIMD2<Float>]) -> [Int] {
     if polygon.count == 3 { return [0, 1, 2] }
 
     var indices = Array(0..<polygon.count)
+
+    // Compute signed area to normalize winding to CCW (fixes CW clicks from the shape editor).
+    var signed: Float = 0.0
+    let n = polygon.count
+    for i in 0..<n {
+        let j = (i + 1) % n
+        signed += polygon[i].x * polygon[j].y - polygon[j].x * polygon[i].y
+    }
+    if signed < 0 {
+        indices.reverse()
+    }
+
     var result: [Int] = []
+    var remaining = indices.count
+    var i = 0
+    var attempts = 0
 
     func isEar(i: Int) -> Bool {
         let n = indices.count
         let prev = indices[(i + n - 1) % n]
         let curr = indices[i]
         let next = indices[(i + 1) % n]
-        // Check triangle is CCW (positive area)
         let a = polygon[prev], b = polygon[curr], c = polygon[next]
         let cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
         if cross <= 0 { return false }
-        // Check no other vertices inside the triangle
         for k in 0..<n where k != (i + n - 1) % n && k != i && k != (i + 1) % n {
             if pointInTriangle(polygon[indices[k]], a: a, b: b, c: c) { return false }
         }
         return true
     }
 
-    var remaining = indices.count
-    var attempts = 0
-    var i = 0
-    while remaining > 3 {
-        if isEar(i: i % remaining) {
+    while remaining > 3 && attempts < 1000 {
+        if isEar(i: i) {
             let n = remaining
-            let prev = indices[(i % n + n - 1) % n]
-            let curr = indices[i % n]
-            let next = indices[(i % n + 1) % n]
+            let prev = indices[(i + n - 1) % n]
+            let curr = indices[i]
+            let next = indices[(i + 1) % n]
             result.append(contentsOf: [prev, curr, next])
-            indices.remove(at: i % n)
+            indices.remove(at: i)
             remaining -= 1
+            i = max(0, i - 1)  // backtrack to recheck the preceding vertex
             attempts = 0
         } else {
-            i += 1
+            i = (i + 1) % remaining
             attempts += 1
-            if attempts > remaining { break }  // degenerate polygon
         }
     }
     if remaining == 3 {
