@@ -57,10 +57,13 @@ final class SimulationViewController: NSViewController {
     private let tableVisibilityDefaultsKey = "SimulationShowsTable"
     private var isRestoringSplitPosition = false
     private var suppressSplitSaveUntilReady = true
-    // Set while we're driving the divider programmatically (toggle / restore) so
-    // the delegate doesn't misinterpret the transient state as a user drag and
-    // clobber persisted state.
-    private var isProgrammaticallyAdjustingSplit = false
+    // Counts in-flight programmatic divider adjustments (toggle / restore). The
+    // delegate ignores resize events while this is non-zero so it doesn't
+    // misinterpret the transient state as a user drag and clobber persisted
+    // state. A counter (rather than a Bool) avoids races between overlapping
+    // programmatic adjustments.
+    private var programmaticSplitAdjustments: Int = 0
+    private var isProgrammaticallyAdjustingSplit: Bool { programmaticSplitAdjustments > 0 }
     // Minimum widths used when clamping table/metal widths.
     private let minTableWidth: CGFloat = 150
     private let minMetalWidth: CGFloat = 200
@@ -639,19 +642,37 @@ final class SimulationViewController: NSViewController {
         }
     }
 
+    /// Total horizontal extent of the split view (falls back to the controller's
+    /// view bounds before the split view has been laid out).
+    private var splitTotalWidth: CGFloat {
+        splitView?.bounds.width ?? view.bounds.width
+    }
+
+    /// Begin a programmatic divider adjustment. Returns a token that must be
+    /// passed to `endProgrammaticSplitAdjustment(_:)` once the adjustment is
+    /// complete (after layout has settled on the next runloop turn).
+    private func beginProgrammaticSplitAdjustment() {
+        programmaticSplitAdjustments += 1
+    }
+
+    private func endProgrammaticSplitAdjustment() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if self.programmaticSplitAdjustments > 0 {
+                self.programmaticSplitAdjustments -= 1
+            }
+        }
+    }
+
     /// Drive the split view divider to match `showsTable`. When showing, the
     /// divider is placed so the table pane is exactly the user's last chosen
     /// table width; when hiding, the table pane is collapsed to zero width.
-    /// `isProgrammaticallyAdjustingSplit` is set so the delegate doesn't treat
-    /// the resulting resize events as a manual drag.
+    /// The programmatic-adjustment counter is bumped so the delegate doesn't
+    /// treat the resulting resize events as a manual drag.
     private func applyTableVisibility() {
         guard splitView != nil else { return }
-        isProgrammaticallyAdjustingSplit = true
-        defer {
-            DispatchQueue.main.async { [weak self] in
-                self?.isProgrammaticallyAdjustingSplit = false
-            }
-        }
+        beginProgrammaticSplitAdjustment()
+        defer { endProgrammaticSplitAdjustment() }
         if showsTable {
             let position = dividerPositionForTableWidth(desiredTableWidth())
             splitView.setPosition(position, ofDividerAt: 0)
@@ -677,8 +698,7 @@ final class SimulationViewController: NSViewController {
     }
 
     private func clampedTableWidth(_ width: CGFloat) -> CGFloat {
-        let total = splitView?.bounds.width ?? view.bounds.width
-        let maxTable = max(total - minMetalWidth, minTableWidth)
+        let maxTable = max(splitTotalWidth - minMetalWidth, minTableWidth)
         return max(minTableWidth, min(width, maxTable))
     }
 
@@ -686,13 +706,11 @@ final class SimulationViewController: NSViewController {
         if let saved = storedTableWidth() {
             return clampedTableWidth(saved)
         }
-        let total = splitView?.bounds.width ?? view.bounds.width
-        return clampedTableWidth(total * 0.32)
+        return clampedTableWidth(splitTotalWidth * 0.32)
     }
 
     private func dividerPositionForTableWidth(_ tableWidth: CGFloat) -> CGFloat {
-        let total = splitView?.bounds.width ?? view.bounds.width
-        return total - clampedTableWidth(tableWidth)
+        return splitTotalWidth - clampedTableWidth(tableWidth)
     }
 
     /// Persist the current table (right-pane) width. Only saves when the table
@@ -708,12 +726,8 @@ final class SimulationViewController: NSViewController {
 
     private func restoreSplitViewPosition() {
         guard splitView != nil else { return }
-        isProgrammaticallyAdjustingSplit = true
-        defer {
-            DispatchQueue.main.async { [weak self] in
-                self?.isProgrammaticallyAdjustingSplit = false
-            }
-        }
+        beginProgrammaticSplitAdjustment()
+        defer { endProgrammaticSplitAdjustment() }
         if showsTable {
             isRestoringSplitPosition = true
             let position = dividerPositionForTableWidth(desiredTableWidth())
