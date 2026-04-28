@@ -120,9 +120,13 @@ final class Body: Identifiable {
         return Body(position: position, localVertices: verts, color: color)
     }
 
-    /// Canonical (unscaled) ship outline vertices in CCW order.
-    /// The ship points along +x; bow at (0.5, 0), stern at x = -0.5.
-    /// 20 vertices = 20 line segments, forming a rounded hull silhouette.
+    /// Canonical (unscaled) ship outline vertices in CCW order, expressed in
+    /// unit coordinates: bow tip at (0.5, 0) and stern at x = -0.5. These
+    /// coordinates are multiplied by `length` in `makeShip(...)` to produce the
+    /// actual body-local vertices, so the polygon's total bow-to-stern extent
+    /// equals `length`. The ship points along +x (used as the facing
+    /// direction for thrust). 20 vertices ⇒ 20 line segments forming a
+    /// rounded hull silhouette.
     private static let shipUnitVertices: [SIMD2<Float>] = [
         SIMD2<Float>( 0.50,  0.00),  // bow tip
         SIMD2<Float>( 0.48,  0.04),

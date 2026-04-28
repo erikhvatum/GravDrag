@@ -122,7 +122,7 @@ final class SimulationViewController: NSViewController {
     // The demo triangle has radius 26 (≈52 across). A ship length of 26 is
     // therefore "about half the size" of that triangle along its longest axis.
     private var shipLength: Float = 26.0
-    private var shipMass:   Float = 0  // 0 sentinel: use area-derived mass on first dialog open
+    private var shipMass:   Float? = nil  // nil → use area-derived default
 
     // Tracks which bodies were inserted as ships, so we can detect a
     // double-click on a ship vs any other body.
@@ -132,12 +132,18 @@ final class SimulationViewController: NSViewController {
     private var controlledShip: Body? = nil
     private var shipControlPanel: ShipControlPanel? = nil
     private var shipThrustValue: Float = 0.30        // 0...1, slider-driven
-    private var arrowKeysHeld: Set<UInt16> = []      // 123/124/125/126
+    private var arrowKeysHeld: Set<UInt16> = []
 
     // Per-step thrust applied at slider value 1.0 (units of velocity per physics step).
     private let shipMaxThrustPerStep: Float = 30.0
     // Per-step turn rate applied while ←/→ held (radians per physics step).
     private let shipTurnPerStep: Float = 0.05
+
+    // macOS virtual key codes for the arrow keys.
+    private static let keyLeftArrow:  UInt16 = 123
+    private static let keyRightArrow: UInt16 = 124
+    private static let keyDownArrow:  UInt16 = 125
+    private static let keyUpArrow:    UInt16 = 126
 
     // Physics timer drives simulation steps at fixed rate
     private var physicsTimer: Timer?
@@ -973,7 +979,8 @@ final class SimulationViewController: NSViewController {
         // applyShipControls). Suppress the system beep by returning early.
         if controlledShip != nil {
             switch event.keyCode {
-            case 123, 124, 125, 126:
+            case Self.keyLeftArrow, Self.keyRightArrow,
+                 Self.keyDownArrow, Self.keyUpArrow:
                 arrowKeysHeld.insert(event.keyCode)
                 return
             default:
@@ -1006,7 +1013,8 @@ final class SimulationViewController: NSViewController {
     override func keyUp(with event: NSEvent) {
         if controlledShip != nil {
             switch event.keyCode {
-            case 123, 124, 125, 126:
+            case Self.keyLeftArrow, Self.keyRightArrow,
+                 Self.keyDownArrow, Self.keyUpArrow:
                 arrowKeysHeld.remove(event.keyCode)
                 return
             default:
@@ -1314,13 +1322,13 @@ final class SimulationViewController: NSViewController {
         let sizeField = NSTextField(string: String(format: "%g", shipLength))
         sizeField.placeholderString = "26"
 
-        // First-time defaulting: pick the area-derived mass for the current size.
-        if shipMass <= 0 {
-            shipMass = defaultShipMass(forLength: shipLength)
-        }
+        // Show the user's previously chosen mass (if any), otherwise the
+        // area-derived default for the current size.
+        let currentDefault = defaultShipMass(forLength: shipLength)
+        let displayedMass  = shipMass ?? currentDefault
         let massLabel = NSTextField(labelWithString: "Ship mass:")
-        let massField = NSTextField(string: String(format: "%g", shipMass))
-        massField.placeholderString = "\(defaultShipMass(forLength: shipLength))"
+        let massField = NSTextField(string: String(format: "%g", displayedMass))
+        massField.placeholderString = "\(currentDefault)"
 
         let gridView = NSGridView(views: [
             [sizeLabel, sizeField],
@@ -1355,7 +1363,7 @@ final class SimulationViewController: NSViewController {
     private func addShipAt(_ position: SIMD2<Float>) {
         let color = bodyColors[colorIndex % bodyColors.count]
         colorIndex += 1
-        let mass = shipMass > 0 ? shipMass : defaultShipMass(forLength: shipLength)
+        let mass = shipMass ?? defaultShipMass(forLength: shipLength)
         let ship = Body.makeShip(position: position,
                                  length:   shipLength,
                                  mass:     mass,
@@ -1424,20 +1432,23 @@ final class SimulationViewController: NSViewController {
         if simulation.isPaused { return }
 
         // Turning (constant rate, slider does not affect turn).
-        if arrowKeysHeld.contains(123) {        // Left
+        if arrowKeysHeld.contains(Self.keyLeftArrow) {
             ship.angle += shipTurnPerStep
         }
-        if arrowKeysHeld.contains(124) {        // Right
+        if arrowKeysHeld.contains(Self.keyRightArrow) {
             ship.angle -= shipTurnPerStep
         }
-        // Forward / reverse thrust scaled by slider.
+        // Forward / reverse thrust scaled by slider. The ship polygon is
+        // oriented along +x in body-local space (see Body.shipUnitVertices),
+        // so the world-space facing direction at orientation `angle` is
+        // (cos(angle), sin(angle)).
         if shipThrustValue > 0 {
             let facing = SIMD2<Float>(cos(ship.angle), sin(ship.angle))
             let dv = facing * (shipThrustValue * shipMaxThrustPerStep)
-            if arrowKeysHeld.contains(126) {    // Up — forward thrust
+            if arrowKeysHeld.contains(Self.keyUpArrow) {     // forward thrust
                 ship.velocity += dv
             }
-            if arrowKeysHeld.contains(125) {    // Down — reverse thrust
+            if arrowKeysHeld.contains(Self.keyDownArrow) {   // reverse thrust
                 ship.velocity -= dv
             }
         }
