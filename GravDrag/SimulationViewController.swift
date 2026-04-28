@@ -51,10 +51,19 @@ final class SimulationViewController: NSViewController {
     private var tableScrollView: NSScrollView!
     private var showsTable: Bool = true
     private var hasPerformedInitialLayout: Bool = false
-    private let splitPositionDefaultsKey = "SimulationSplitPosition"
+    // Stores the table (right-pane) width in points. Width-based semantics make
+    // restore robust to window-size changes and to the table being collapsed.
+    private let tableWidthDefaultsKey = "SimulationTableWidth"
     private let tableVisibilityDefaultsKey = "SimulationShowsTable"
     private var isRestoringSplitPosition = false
     private var suppressSplitSaveUntilReady = true
+    // Set while we're driving the divider programmatically (toggle / restore) so
+    // the delegate doesn't misinterpret the transient state as a user drag and
+    // clobber persisted state.
+    private var isProgrammaticallyAdjustingSplit = false
+    // Minimum widths used when clamping table/metal widths.
+    private let minTableWidth: CGFloat = 150
+    private let minMetalWidth: CGFloat = 200
 
     // MARK: Simulation speed
     private var speedSlider: NSSlider!
@@ -619,14 +628,7 @@ final class SimulationViewController: NSViewController {
         showsTable.toggle()
         saveTableVisibility()
 
-        if showsTable {
-            let targetWidth = desiredSplitPosition()
-            splitView.setPosition(targetWidth, ofDividerAt: 0)
-            saveSplitViewPosition()
-        } else {
-            // Collapse table pane to zero width (no isHidden – this was causing runtime layout errors)
-            splitView.setPosition(splitView.bounds.width, ofDividerAt: 0)
-        }
+        applyTableVisibility()
 
         renderer.viewSize = metalView.drawableSize
         simulation.rebuildGPUState()
@@ -637,51 +639,91 @@ final class SimulationViewController: NSViewController {
         }
     }
 
+    /// Drive the split view divider to match `showsTable`. When showing, the
+    /// divider is placed so the table pane is exactly the user's last chosen
+    /// table width; when hiding, the table pane is collapsed to zero width.
+    /// `isProgrammaticallyAdjustingSplit` is set so the delegate doesn't treat
+    /// the resulting resize events as a manual drag.
+    private func applyTableVisibility() {
+        guard splitView != nil else { return }
+        isProgrammaticallyAdjustingSplit = true
+        defer {
+            DispatchQueue.main.async { [weak self] in
+                self?.isProgrammaticallyAdjustingSplit = false
+            }
+        }
+        if showsTable {
+            let position = dividerPositionForTableWidth(desiredTableWidth())
+            splitView.setPosition(position, ofDividerAt: 0)
+        } else {
+            // Collapse table pane to zero width. We deliberately do NOT touch
+            // the persisted table width here, so that toggling the table back
+            // on restores its previous width.
+            splitView.setPosition(splitView.bounds.width, ofDividerAt: 0)
+        }
+    }
+
     private func saveTableVisibility() {
         UserDefaults.standard.set(showsTable, forKey: tableVisibilityDefaultsKey)
     }
 
-    // MARK: - Split view persistence
+    // MARK: - Split view persistence (table-width based)
 
-    private func storedSplitPosition() -> CGFloat? {
+    private func storedTableWidth() -> CGFloat? {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: splitPositionDefaultsKey) != nil else { return nil }
-        return CGFloat(defaults.double(forKey: splitPositionDefaultsKey))
+        guard defaults.object(forKey: tableWidthDefaultsKey) != nil else { return nil }
+        let w = CGFloat(defaults.double(forKey: tableWidthDefaultsKey))
+        return w > 0 ? w : nil
     }
 
-    private func clampedSplitPosition(_ position: CGFloat) -> CGFloat {
-        let minLeft: CGFloat = 200
-        let maxLeft = max(view.bounds.width - 150, minLeft)
-        return max(minLeft, min(position, maxLeft))
+    private func clampedTableWidth(_ width: CGFloat) -> CGFloat {
+        let total = splitView?.bounds.width ?? view.bounds.width
+        let maxTable = max(total - minMetalWidth, minTableWidth)
+        return max(minTableWidth, min(width, maxTable))
     }
 
-    private func desiredSplitPosition() -> CGFloat {
-        let defaultWidth = view.bounds.width * 0.68
-        if let saved = storedSplitPosition() {
-            return clampedSplitPosition(saved)
-        } else {
-            return clampedSplitPosition(defaultWidth)
+    private func desiredTableWidth() -> CGFloat {
+        if let saved = storedTableWidth() {
+            return clampedTableWidth(saved)
         }
+        let total = splitView?.bounds.width ?? view.bounds.width
+        return clampedTableWidth(total * 0.32)
     }
 
-    private func saveSplitViewPosition() {
+    private func dividerPositionForTableWidth(_ tableWidth: CGFloat) -> CGFloat {
+        let total = splitView?.bounds.width ?? view.bounds.width
+        return total - clampedTableWidth(tableWidth)
+    }
+
+    /// Persist the current table (right-pane) width. Only saves when the table
+    /// is shown and has a positive width, so the collapsed state never
+    /// overwrites the user's last chosen width.
+    private func saveTableWidth() {
         guard showsTable, !suppressSplitSaveUntilReady else { return }
-        let position = splitView.arrangedSubviews.first?.frame.width ?? 0
-        let clamped = clampedSplitPosition(position)
-        UserDefaults.standard.set(Double(clamped), forKey: splitPositionDefaultsKey)
+        guard splitView != nil, splitView.arrangedSubviews.count >= 2 else { return }
+        let tableWidth = splitView.arrangedSubviews[1].frame.width
+        guard tableWidth > 0.5 else { return }
+        UserDefaults.standard.set(Double(tableWidth), forKey: tableWidthDefaultsKey)
     }
 
     private func restoreSplitViewPosition() {
         guard splitView != nil else { return }
+        isProgrammaticallyAdjustingSplit = true
+        defer {
+            DispatchQueue.main.async { [weak self] in
+                self?.isProgrammaticallyAdjustingSplit = false
+            }
+        }
         if showsTable {
             isRestoringSplitPosition = true
-            let position = desiredSplitPosition()
+            let position = dividerPositionForTableWidth(desiredTableWidth())
             splitView.setPosition(position, ofDividerAt: 0)
             DispatchQueue.main.async { [weak self] in
                 self?.isRestoringSplitPosition = false
             }
         } else {
-            // Collapse table pane to zero width (no isHidden – this was causing runtime layout errors)
+            // Collapse table pane to zero width without disturbing the
+            // persisted table width, so a later toggle-on restores it.
             splitView.setPosition(splitView.bounds.width, ofDividerAt: 0)
         }
     }
@@ -1255,9 +1297,19 @@ extension SimulationViewController: NSSplitViewDelegate {
             isRestoringSplitPosition = false
             return
         }
-        saveSplitViewPosition()
         renderer.viewSize = metalView.drawableSize
         simulation.rebuildGPUState()
+
+        // While we're driving the divider programmatically (toggle / restore)
+        // intermediate resize events must not be confused with a manual drag
+        // and must not overwrite the persisted table width with the transient
+        // collapsed state.
+        if isProgrammaticallyAdjustingSplit {
+            return
+        }
+
+        // Persist current table width (only saves when shown and > 0).
+        saveTableWidth()
 
         // Keep showsTable in sync if the user manually drags the divider to collapse/expand the table pane
         let currentlyCollapsed = splitView.isSubviewCollapsed(tableScrollView)
