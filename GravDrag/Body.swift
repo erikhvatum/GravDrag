@@ -120,6 +120,50 @@ final class Body: Identifiable {
         return Body(position: position, localVertices: verts, color: color)
     }
 
+    /// Canonical (unscaled) ship outline vertices in CCW order.
+    /// The ship points along +x; bow at (0.5, 0), stern at x = -0.5.
+    /// 20 vertices = 20 line segments, forming a rounded hull silhouette.
+    private static let shipUnitVertices: [SIMD2<Float>] = [
+        SIMD2<Float>( 0.50,  0.00),  // bow tip
+        SIMD2<Float>( 0.48,  0.04),
+        SIMD2<Float>( 0.44,  0.08),
+        SIMD2<Float>( 0.38,  0.12),
+        SIMD2<Float>( 0.30,  0.15),
+        SIMD2<Float>( 0.18,  0.17),
+        SIMD2<Float>( 0.05,  0.18),
+        SIMD2<Float>(-0.10,  0.18),
+        SIMD2<Float>(-0.25,  0.17),
+        SIMD2<Float>(-0.40,  0.15),
+        SIMD2<Float>(-0.50,  0.12),  // upper stern corner
+        SIMD2<Float>(-0.50, -0.12),  // lower stern corner
+        SIMD2<Float>(-0.40, -0.15),
+        SIMD2<Float>(-0.25, -0.17),
+        SIMD2<Float>(-0.10, -0.18),
+        SIMD2<Float>( 0.05, -0.18),
+        SIMD2<Float>( 0.18, -0.17),
+        SIMD2<Float>( 0.30, -0.15),
+        SIMD2<Float>( 0.38, -0.12),
+        SIMD2<Float>( 0.44, -0.08)
+    ]
+
+    /// Makes a polygon-shaped ship body. `length` is the total bow-to-stern
+    /// extent. `mass` overrides the density-derived mass (use nil to accept
+    /// the area-derived default).
+    static func makeShip(
+        position: SIMD2<Float>,
+        length:   Float,
+        mass:     Float?    = nil,
+        color:    SIMD4<Float>
+    ) -> Body {
+        let verts = shipUnitVertices.map { $0 * length }
+        let body = Body(position: position, localVertices: verts, color: color)
+        if let m = mass, m > 0 {
+            body.mass            = m
+            body.momentOfInertia = polygonMomentOfInertia(verts, mass: m)
+        }
+        return body
+    }
+
     // MARK: - Geometry helpers
 
     static func polygonArea(_ verts: [SIMD2<Float>]) -> Float {

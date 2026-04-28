@@ -9,6 +9,7 @@ enum ToolMode {
     case delete     // click to delete
     case rosette    // click to place a Keplerian rosette
     case galaxy     // click to place a swirling galaxy
+    case ship       // click to insert a controllable ship
 }
 
 // MARK: - Selection tool sub-type
@@ -37,6 +38,7 @@ final class SimulationViewController: NSViewController {
     private var deleteButton:    NSButton!
     private var rosetteButton:   NSButton!
     private var galaxyButton:    NSButton!
+    private var shipButton:      NSButton!
     private var rectSelButton:   NSButton!
     private var lassoSelButton:  NSButton!
     private var shapePopup:      NSPopUpButton!
@@ -115,6 +117,27 @@ final class SimulationViewController: NSViewController {
     private var galaxyRadius: Float = 800.0
     private var galaxyHasCentralMass: Bool = true
     private let galaxyTargetPeriod: Float = 12.0
+
+    // Ship configuration
+    // The demo triangle has radius 26 (≈52 across). A ship length of 26 is
+    // therefore "about half the size" of that triangle along its longest axis.
+    private var shipLength: Float = 26.0
+    private var shipMass:   Float = 0  // 0 sentinel: use area-derived mass on first dialog open
+
+    // Tracks which bodies were inserted as ships, so we can detect a
+    // double-click on a ship vs any other body.
+    private var shipIDs: Set<UUID> = []
+
+    // Active ship-control state (set when a ship is double-clicked in select mode)
+    private var controlledShip: Body? = nil
+    private var shipControlPanel: ShipControlPanel? = nil
+    private var shipThrustValue: Float = 0.30        // 0...1, slider-driven
+    private var arrowKeysHeld: Set<UInt16> = []      // 123/124/125/126
+
+    // Per-step thrust applied at slider value 1.0 (units of velocity per physics step).
+    private let shipMaxThrustPerStep: Float = 30.0
+    // Per-step turn rate applied while ←/→ held (radians per physics step).
+    private let shipTurnPerStep: Float = 0.05
 
     // Physics timer drives simulation steps at fixed rate
     private var physicsTimer: Timer?
@@ -261,6 +284,7 @@ final class SimulationViewController: NSViewController {
         deleteButton = makeToolButton("✕",  tip: "Delete body (D)",  action: #selector(selectDeleteTool))
         rosetteButton = makeToolButton("⭘", tip: "Keplerian Rosette", action: #selector(selectRosetteTool))
         galaxyButton  = makeToolButton("🌀", tip: "Galaxy Generator", action: #selector(selectGalaxyTool))
+        shipButton    = makeToolButton("🚀", tip: "Insert Ship",      action: #selector(selectShipTool))
 
         // Selection sub-tools (only meaningful in select mode)
         rectSelButton  = makeToolButton("▭", tip: "Rectangle select", action: #selector(useRectSelect))
@@ -344,7 +368,7 @@ final class SimulationViewController: NSViewController {
                           resetButton,
                           clearButton,
                           sep(),
-                          addButton, selectButton, deleteButton, rosetteButton, galaxyButton,
+                          addButton, selectButton, deleteButton, rosetteButton, galaxyButton, shipButton,
                           sep(),
                           rectSelButton, lassoSelButton,
                           sep(),
@@ -458,7 +482,9 @@ final class SimulationViewController: NSViewController {
     private func startPhysicsTimer() {
         physicsTimer?.invalidate()
         physicsTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / physicsHz, repeats: true) { [weak self] _ in
-            self?.simulation.step()
+            guard let self = self else { return }
+            self.applyShipControls()
+            self.simulation.step()
         }
     }
 
@@ -534,6 +560,7 @@ final class SimulationViewController: NSViewController {
         deleteButton.state = toolMode == .delete ? .on : .off
         rosetteButton.state = toolMode == .rosette ? .on : .off
         galaxyButton.state  = toolMode == .galaxy ? .on : .off
+        shipButton.state    = toolMode == .ship    ? .on : .off
         rectSelButton.state  = selectionKind == .rectangle ? .on : .off
         lassoSelButton.state = selectionKind == .lasso     ? .on : .off
         let inSel = toolMode == .select
@@ -551,6 +578,8 @@ final class SimulationViewController: NSViewController {
 
     @objc func resetSimulation(_ sender: Any? = nil) {
         simulation.isPaused = true
+        shipIDs.removeAll()
+        shipControlPanel?.close()
         simulation.loadDemoScene()
         simulation.deselectAll()
         simulation.clearFocus()
@@ -592,10 +621,16 @@ final class SimulationViewController: NSViewController {
         showGalaxyConfigDialog()
     }
 
+    @objc private func selectShipTool() {
+        showShipConfigDialog()
+    }
+
     @objc private func clearAllBodies() {
         // Remove all bodies from the simulation
         simulation.bodies.forEach { renderer.evictIndexBuffer(for: $0.id) }
         simulation.removeAllBodies()
+        shipIDs.removeAll()
+        shipControlPanel?.close()
         updateHUD()
         updateTable()
     }
@@ -762,8 +797,18 @@ final class SimulationViewController: NSViewController {
             addRosetteAt(world)
         case .galaxy:
             addGalaxyAt(world)
+        case .ship:
+            addShipAt(world)
 
         case .select:
+            // Double-click on a ship enters/refreshes ship-control mode.
+            if event.clickCount >= 2,
+               let b = simulation.body(at: world),
+               shipIDs.contains(b.id) {
+                openShipControlPanel(for: b)
+                updateHUD()
+                return
+            }
             if let b = simulation.body(at: world) {
                 // Clicking an unselected body clears current selection
                 if !b.isSelected { simulation.deselectAll() }
@@ -923,6 +968,18 @@ final class SimulationViewController: NSViewController {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        // While a ship is being controlled, arrow keys steer it. Track the
+        // pressed keys (autorepeat is fine — only the contains() matters in
+        // applyShipControls). Suppress the system beep by returning early.
+        if controlledShip != nil {
+            switch event.keyCode {
+            case 123, 124, 125, 126:
+                arrowKeysHeld.insert(event.keyCode)
+                return
+            default:
+                break
+            }
+        }
         switch event.keyCode {
         case 49:                                    // Space
             togglePause()
@@ -947,6 +1004,15 @@ final class SimulationViewController: NSViewController {
     }
 
     override func keyUp(with event: NSEvent) {
+        if controlledShip != nil {
+            switch event.keyCode {
+            case 123, 124, 125, 126:
+                arrowKeysHeld.remove(event.keyCode)
+                return
+            default:
+                break
+            }
+        }
         switch event.keyCode {
         case 9:                                     // V
             isVKeyPressed = false
@@ -1226,6 +1292,158 @@ final class SimulationViewController: NSViewController {
 
         updateHUD()
     }
+
+    // MARK: - Ship configuration, placement, and control
+
+    /// Computes a sensible default mass for a ship of the given length, based
+    /// on the polygon area and the same density the regular `Body` initializer
+    /// uses (1.0). Used to populate the dialog's mass field.
+    private func defaultShipMass(forLength length: Float) -> Float {
+        let probe = Body.makeShip(position: .zero,
+                                  length: length,
+                                  color: SIMD4<Float>(1, 1, 1, 1))
+        return probe.mass
+    }
+
+    private func showShipConfigDialog() {
+        let alert = NSAlert()
+        alert.messageText = "Ship Configuration"
+        alert.informativeText = "Configure the ship size and mass"
+
+        let sizeLabel = NSTextField(labelWithString: "Ship size (length):")
+        let sizeField = NSTextField(string: String(format: "%g", shipLength))
+        sizeField.placeholderString = "26"
+
+        // First-time defaulting: pick the area-derived mass for the current size.
+        if shipMass <= 0 {
+            shipMass = defaultShipMass(forLength: shipLength)
+        }
+        let massLabel = NSTextField(labelWithString: "Ship mass:")
+        let massField = NSTextField(string: String(format: "%g", shipMass))
+        massField.placeholderString = "\(defaultShipMass(forLength: shipLength))"
+
+        let gridView = NSGridView(views: [
+            [sizeLabel, sizeField],
+            [massLabel, massField]
+        ])
+        gridView.rowSpacing = 8
+        gridView.columnSpacing = 10
+        gridView.column(at: 0).xPlacement = .trailing
+        gridView.column(at: 1).xPlacement = .fill
+        gridView.rowAlignment = .firstBaseline
+        gridView.column(at: 1).width = 100
+        gridView.setFrameSize(gridView.fittingSize)
+
+        alert.accessoryView = gridView
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            if let len = Float(sizeField.stringValue), len > 0 {
+                shipLength = len
+            }
+            if let m = Float(massField.stringValue), m > 0 {
+                shipMass = m
+            }
+            toolMode = .ship
+            simulation.deselectAll()
+            updateToolButtons()
+        }
+    }
+
+    private func addShipAt(_ position: SIMD2<Float>) {
+        let color = bodyColors[colorIndex % bodyColors.count]
+        colorIndex += 1
+        let mass = shipMass > 0 ? shipMass : defaultShipMass(forLength: shipLength)
+        let ship = Body.makeShip(position: position,
+                                 length:   shipLength,
+                                 mass:     mass,
+                                 color:    color)
+        simulation.addBody(ship)
+        shipIDs.insert(ship.id)
+        updateHUD()
+    }
+
+    // MARK: Ship-control floating panel & arrow-key control
+
+    private func openShipControlPanel(for ship: Body) {
+        controlledShip = ship
+
+        if shipControlPanel == nil {
+            let panel = ShipControlPanel(initialThrust: shipThrustValue)
+            panel.title = "Ship Control"
+            panel.level = .floating
+            panel.isFloatingPanel = true
+            panel.becomesKeyOnlyIfNeeded = true
+            panel.hidesOnDeactivate = false
+            panel.controllerDelegate = self
+            // Position near the top-right of the main window.
+            if let win = view.window {
+                let origin = NSPoint(x: win.frame.maxX - panel.frame.width - 24,
+                                     y: win.frame.maxY - panel.frame.height - 60)
+                panel.setFrameOrigin(origin)
+            }
+            shipControlPanel = panel
+        }
+        // Make sure arrow-key state is fresh on (re)entry.
+        arrowKeysHeld.removeAll()
+        // Show but keep the main window key, so arrow keys still reach the
+        // simulation view controller.
+        shipControlPanel?.orderFront(nil)
+        view.window?.makeKey()
+        view.window?.makeFirstResponder(view)
+    }
+
+    fileprivate func shipControlPanelDidClose() {
+        controlledShip = nil
+        arrowKeysHeld.removeAll()
+        shipControlPanel = nil
+    }
+
+    fileprivate func shipControlPanelThrustChanged(_ value: Float) {
+        shipThrustValue = max(0, min(1, value))
+    }
+
+    fileprivate func shipControlPanelZeroVelocity() {
+        controlledShip?.velocity = .zero
+        simulation.rebuildGPUState()
+        updateTable()
+    }
+
+    /// Called every physics step. If a ship is being controlled and arrow keys
+    /// are held, applies thrust along the ship's facing direction and turning.
+    private func applyShipControls() {
+        guard let ship = controlledShip else { return }
+        // If the controlled ship has been removed from the simulation, tear down.
+        if !simulation.bodies.contains(where: { $0 === ship }) {
+            shipControlPanel?.close()
+            return
+        }
+        guard !arrowKeysHeld.isEmpty else { return }
+        if simulation.isPaused { return }
+
+        // Turning (constant rate, slider does not affect turn).
+        if arrowKeysHeld.contains(123) {        // Left
+            ship.angle += shipTurnPerStep
+        }
+        if arrowKeysHeld.contains(124) {        // Right
+            ship.angle -= shipTurnPerStep
+        }
+        // Forward / reverse thrust scaled by slider.
+        if shipThrustValue > 0 {
+            let facing = SIMD2<Float>(cos(ship.angle), sin(ship.angle))
+            let dv = facing * (shipThrustValue * shipMaxThrustPerStep)
+            if arrowKeysHeld.contains(126) {    // Up — forward thrust
+                ship.velocity += dv
+            }
+            if arrowKeysHeld.contains(125) {    // Down — reverse thrust
+                ship.velocity -= dv
+            }
+        }
+        simulation.rebuildGPUState()
+    }
+
 
     // MARK: - Selection overlay
 
@@ -1568,3 +1786,100 @@ extension SimulationViewController: ShapeEditorDelegate {
         shapePopup.selectItem(at: 3)   // "Custom…"
     }
 }
+
+// MARK: - Ship-control floating panel
+
+/// Floating panel that appears when a ship is double-clicked in select mode.
+/// Hosts a thrust slider (0…1) and a "Velocity Zero" button. The panel is
+/// designed to *not* steal key-window status from the main window so that
+/// arrow-key input continues to reach the simulation view controller while
+/// the panel is shown.
+final class ShipControlPanel: NSPanel, NSWindowDelegate {
+
+    weak var controllerDelegate: SimulationViewController?
+
+    private let thrustSlider: NSSlider
+    private let thrustLabel:  NSTextField
+    private let zeroButton:   NSButton
+
+    init(initialThrust: Float) {
+        let frame = NSRect(x: 0, y: 0, width: 320, height: 96)
+        thrustSlider = NSSlider(value: Double(initialThrust),
+                                minValue: 0.0,
+                                maxValue: 1.0,
+                                target: nil,
+                                action: nil)
+        thrustLabel = NSTextField(labelWithString: "Thrust:")
+        zeroButton  = NSButton(title: "Velocity Zero", target: nil, action: nil)
+
+        super.init(contentRect: frame,
+                   styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel, .hudWindow],
+                   backing: .buffered,
+                   defer: false)
+
+        thrustLabel.textColor = .secondaryLabelColor
+        thrustLabel.font = NSFont.systemFont(ofSize: 11)
+
+        thrustSlider.isContinuous = true
+        thrustSlider.target = self
+        thrustSlider.action = #selector(thrustChanged(_:))
+        thrustSlider.toolTip = "Thrust magnitude (↑/↓ apply forward/reverse thrust)"
+
+        zeroButton.bezelStyle = .rounded
+        zeroButton.target = self
+        zeroButton.action = #selector(zeroVelocityClicked(_:))
+        zeroButton.toolTip = "Set the controlled ship's velocity to zero"
+
+        let row = NSStackView(views: [thrustLabel, thrustSlider, zeroButton])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.alignment = .centerY
+        row.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let helpField = NSTextField(labelWithString: "←/→ turn  ·  ↑/↓ thrust")
+        helpField.textColor = .tertiaryLabelColor
+        helpField.font = NSFont.systemFont(ofSize: 10)
+        helpField.alignment = .center
+        helpField.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = NSStackView(views: [row, helpField])
+        column.orientation = .vertical
+        column.spacing = 2
+        column.alignment = .centerX
+        column.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 8, right: 0)
+        column.translatesAutoresizingMaskIntoConstraints = false
+
+        let content = NSView(frame: frame)
+        content.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.topAnchor.constraint(equalTo: content.topAnchor),
+            column.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            column.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            thrustSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
+        ])
+
+        self.contentView = content
+        self.delegate = self
+        self.isReleasedWhenClosed = false
+    }
+
+    @objc private func thrustChanged(_ sender: NSSlider) {
+        controllerDelegate?.shipControlPanelThrustChanged(Float(sender.doubleValue))
+    }
+
+    @objc private func zeroVelocityClicked(_ sender: NSButton) {
+        controllerDelegate?.shipControlPanelZeroVelocity()
+    }
+
+    // Keep main-window status with the simulation view; defer to
+    // `becomesKeyOnlyIfNeeded` to grant key status only when a control
+    // (e.g. slider drag) actually requires it.
+    override var canBecomeMain: Bool { false }
+
+    func windowWillClose(_ notification: Notification) {
+        controllerDelegate?.shipControlPanelDidClose()
+    }
+}
+
