@@ -620,14 +620,12 @@ final class SimulationViewController: NSViewController {
         saveTableVisibility()
 
         if showsTable {
-            tableScrollView.isHidden = false
             let targetWidth = desiredSplitPosition()
             splitView.setPosition(targetWidth, ofDividerAt: 0)
             saveSplitViewPosition()
         } else {
-            tableScrollView.isHidden = true
-            // Collapse table pane
-            splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
+            // Collapse table pane to zero width (no isHidden – this was causing runtime layout errors)
+            splitView.setPosition(splitView.bounds.width, ofDividerAt: 0)
         }
 
         renderer.viewSize = metalView.drawableSize
@@ -676,7 +674,6 @@ final class SimulationViewController: NSViewController {
     private func restoreSplitViewPosition() {
         guard splitView != nil else { return }
         if showsTable {
-            tableScrollView.isHidden = false
             isRestoringSplitPosition = true
             let position = desiredSplitPosition()
             splitView.setPosition(position, ofDividerAt: 0)
@@ -684,8 +681,8 @@ final class SimulationViewController: NSViewController {
                 self?.isRestoringSplitPosition = false
             }
         } else {
-            tableScrollView.isHidden = true
-            splitView.setPosition(view.bounds.width - 1, ofDividerAt: 0)
+            // Collapse table pane to zero width (no isHidden – this was causing runtime layout errors)
+            splitView.setPosition(splitView.bounds.width, ofDividerAt: 0)
         }
     }
 
@@ -1261,6 +1258,25 @@ extension SimulationViewController: NSSplitViewDelegate {
         saveSplitViewPosition()
         renderer.viewSize = metalView.drawableSize
         simulation.rebuildGPUState()
+
+        // Keep showsTable in sync if the user manually drags the divider to collapse/expand the table pane
+        let currentlyCollapsed = splitView.isSubviewCollapsed(tableScrollView)
+        if showsTable == currentlyCollapsed {
+            showsTable = !currentlyCollapsed
+            saveTableVisibility()
+            updateHUD()
+        }
+    }
+
+    // Required for clean programmatic + user-driven collapse of the table pane (zero-width right pane)
+    // without triggering legacy (non-AutoLayout) layout mode or runtime constraint errors.
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
+        return subview == tableScrollView
+    }
+
+    // Hide the divider when the table pane is collapsed (cleaner UI)
+    func splitView(_ splitView: NSSplitView, shouldHideDividerAt dividerIndex: Int) -> Bool {
+        return dividerIndex == 0 && splitView.isSubviewCollapsed(tableScrollView)
     }
 }
 
